@@ -124,6 +124,8 @@ namespace Solana.Unity.SDK
         private async Task<LocalAssociationScenario> CreateTargetedScenario()
         {
             var package = await ResolveWalletPackage();
+            Debug.Log($"[MWA] Resolved target wallet package: " +
+                      (string.IsNullOrEmpty(package) ? "<none>" : package));
             return new LocalAssociationScenario(package);
         }
 
@@ -138,7 +140,10 @@ namespace Solana.Unity.SDK
 
             var existing = await _walletSelectionCache.GetSelectedWalletPackage();
             if (!string.IsNullOrEmpty(existing))
+            {
+                Debug.Log($"[MWA] TryCacheWalletPackage: keeping existing cached package '{existing}', skipping store of '{walletPackage}'");
                 return;
+            }
 
             await _walletSelectionCache.SetSelectedWalletPackage(walletPackage);
         }
@@ -273,8 +278,8 @@ namespace Solana.Unity.SDK
             // operation that actually needs the wallet (see RunPrivileged).
             if (_walletOptions.keepConnectionAlive)
             {
-                string pk = PlayerPrefs.GetString(PrefKeyPublicKey, null);
-                string authToken = await _authCache.Get();
+                var pk = PlayerPrefs.GetString(PrefKeyPublicKey, null);
+                var authToken = await _authCache.Get();
 
                 if (!pk.IsNullOrEmpty() && !authToken.IsNullOrEmpty())
                 {
@@ -321,11 +326,15 @@ namespace Solana.Unity.SDK
             PlayerPrefs.Save();
             await _authCache.Set(_authToken);
 
-            // Try to identify and cache the wallet package from the account label
-            // so subsequent connections can target it directly.
-            await TryCacheWalletPackage(
-                MwaWalletDiscovery.ResolvePackageFromLabel(
-                    authorizationOperation.Authorization.AccountLabel));
+            // Try to identify and cache the wallet package from the account label so subsequent connections can target it directly.
+            var rawLabel = authorizationOperation.Authorization.AccountLabel;
+            var resolvedFromLabel = MwaWalletDiscovery.ResolvePackageFromLabel(rawLabel);
+            Debug.Log($"[MWA] Login store path: AccountLabel=" +
+                      (string.IsNullOrEmpty(rawLabel) ? "<empty>" : $"\"{rawLabel}\"") +
+                      $" -> resolved package=" +
+                      (string.IsNullOrEmpty(resolvedFromLabel) ? "<none>" : resolvedFromLabel));
+            
+            await TryCacheWalletPackage(resolvedFromLabel);
 
             return new Account(string.Empty, publicKey);
         }
@@ -399,11 +408,18 @@ namespace Solana.Unity.SDK
             if (authToken.IsNullOrEmpty())
                 authToken = await _authCache.Get();
 
-            if (!authToken.IsNullOrEmpty())
+            // Deauthorize must go straight to the wallet that issued the token.
+            // If we can't resolve that exact package (none cached, or the wallet
+            // was uninstalled), do NOT fall back to an untargeted intent — that
+            // would pop the OS wallet chooser, which makes no sense for a
+            // disconnect. Skip the remote revoke and just clear local state.
+            string targetPackage = await ResolveWalletPackage();
+
+            if (!authToken.IsNullOrEmpty() && !string.IsNullOrEmpty(targetPackage))
             {
                 try
                 {
-                    using var localAssociationScenario = await CreateTargetedScenario();
+                    using var localAssociationScenario = new LocalAssociationScenario(targetPackage);
                     var result = await localAssociationScenario.StartAndExecute(
                         new List<Action<IAdapterOperations>>
                         {
@@ -422,6 +438,12 @@ namespace Solana.Unity.SDK
                 {
                     Debug.LogWarning($"[MWA] Deauthorize transport failed (best-effort): {e}");
                 }
+            }
+            else
+            {
+                Debug.Log("[MWA] DisconnectWallet: no targetable wallet package " +
+                          "(none cached or token already gone); skipping remote deauthorize, " +
+                          "clearing local session only.");
             }
 
             Logout();

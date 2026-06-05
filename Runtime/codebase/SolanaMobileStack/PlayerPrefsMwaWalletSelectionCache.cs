@@ -17,7 +17,10 @@ namespace Solana.Unity.SDK
 
         public Task<string> GetSelectedWalletPackage()
         {
-            return Task.FromResult(PlayerPrefs.GetString(_key, null));
+            var value = PlayerPrefs.GetString(_key, null);
+            Debug.Log($"[MWA][WalletCache] Read selected wallet: " +
+                      (string.IsNullOrEmpty(value) ? "<empty>" : value));
+            return Task.FromResult(value);
         }
 
         public Task SetSelectedWalletPackage(string packageName)

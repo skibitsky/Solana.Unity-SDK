@@ -77,6 +77,7 @@ namespace Solana.Unity.SDK
                 return cached;
             }
 
+            Debug.Log("[MWA][Discovery] No cached wallet package; intent will be untargeted (OS chooser).");
             return null;
         }
     }

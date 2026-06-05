@@ -288,7 +288,7 @@ public class LocalAssociationScenario : IDisposable
                 var json = System.Text.Encoding.UTF8.GetString(decrypted);
                 _client.Receive(json);
 
-                LogFullMessage("[MWA] Received message", json);
+                Debug.Log($"[MWA] Received encrypted message");
 
                 var response = JsonConvert.DeserializeObject<Response<object>>(json);
                 _responseTcs.TrySetResult(response);
@@ -298,33 +298,6 @@ public class LocalAssociationScenario : IDisposable
         {
             Debug.Log($"[MWA] Message handler error: {ex}");
             _responseTcs.TrySetException(ex);
-        }
-    }
-
-    // Logs a payload in full. logcat truncates a single line at ~4000 chars, so
-    // long messages are split into chunks to avoid losing the tail.
-    private static void LogFullMessage(string prefix, string payload)
-    {
-        const int chunkSize = 3500;
-
-        if (payload == null)
-        {
-            Debug.Log($"{prefix}: <null>");
-            return;
-        }
-
-        if (payload.Length <= chunkSize)
-        {
-            Debug.Log($"{prefix}: {payload}");
-            return;
-        }
-
-        var parts = (payload.Length + chunkSize - 1) / chunkSize;
-        for (var i = 0; i < parts; i++)
-        {
-            var start = i * chunkSize;
-            var len = Math.Min(chunkSize, payload.Length - start);
-            Debug.Log($"{prefix} [{i + 1}/{parts}]: {payload.Substring(start, len)}");
         }
     }
 

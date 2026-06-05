@@ -132,6 +132,8 @@ namespace Solana.Unity.SDK
 
                 var bytes = Convert.FromBase64String(normalized.Substring(0, take));
                 var text = Encoding.UTF8.GetString(bytes);
+                Debug.Log($"[MWA][Discovery] Auth token extrated text: {text}");
+                
                 var match = Regex.Match(text, "\"typ\"\\s*:\\s*\"([^\"]+)\"");
                 return match.Success ? match.Groups[1].Value : null;
             }

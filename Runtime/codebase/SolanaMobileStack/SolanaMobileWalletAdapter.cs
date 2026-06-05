@@ -326,15 +326,17 @@ namespace Solana.Unity.SDK
             PlayerPrefs.Save();
             await _authCache.Set(_authToken);
 
-            // Try to identify and cache the wallet package from the account label so subsequent connections can target it directly.
+            // Identify and cache the wallet package so subsequent connections can
+            // target it directly: try the account label first, then fall back to
+            // the auth-token type.
             var rawLabel = authorizationOperation.Authorization.AccountLabel;
-            var resolvedFromLabel = MwaWalletDiscovery.ResolvePackageFromLabel(rawLabel);
+            var resolvedPackage = MwaWalletDiscovery.ResolvePackage(rawLabel, _authToken);
             Debug.Log($"[MWA] Login store path: AccountLabel=" +
                       (string.IsNullOrEmpty(rawLabel) ? "<empty>" : $"\"{rawLabel}\"") +
                       $" -> resolved package=" +
-                      (string.IsNullOrEmpty(resolvedFromLabel) ? "<none>" : resolvedFromLabel));
-            
-            await TryCacheWalletPackage(resolvedFromLabel);
+                      (string.IsNullOrEmpty(resolvedPackage) ? "<none>" : resolvedPackage));
+
+            await TryCacheWalletPackage(resolvedPackage);
 
             return new Account(string.Empty, publicKey);
         }

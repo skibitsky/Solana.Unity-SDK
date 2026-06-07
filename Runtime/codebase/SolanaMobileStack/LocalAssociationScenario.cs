@@ -171,9 +171,18 @@ public class LocalAssociationScenario : IDisposable
     {
         var intent = LocalAssociationIntentCreator.CreateAssociationIntent(
             associationToken, port, _targetPackage);
-        _currentActivity.Call("startActivityForResult", intent, 0);
-        Debug.Log($"[MWA] Launched intent for port {port}" +
-                  (string.IsNullOrEmpty(_targetPackage) ? "" : $" targeting {_targetPackage}"));
+
+        if (string.IsNullOrEmpty(_targetPackage))
+        {
+            // No cache = OS chooser + capture picked package(EXTRA_CHOSEN_COMPONENT)
+            MwaNativeChooser.LaunchWithChooser(_currentActivity, intent, "Connect wallet");
+            Debug.Log($"[MWA] Launched chooser intent for port {port}");
+        }
+        else
+        {
+            _currentActivity.Call("startActivityForResult", intent, 0);
+            Debug.Log($"[MWA] Launched intent for port {port} targeting {_targetPackage}");
+        }
     }
 
     private async Task ConnectWithBackoffAsync()

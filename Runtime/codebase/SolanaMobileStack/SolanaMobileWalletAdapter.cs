@@ -326,15 +326,24 @@ namespace Solana.Unity.SDK
             PlayerPrefs.Save();
             await _authCache.Set(_authToken);
 
-            // Identify and cache the wallet package so subsequent connections can
-            // target it directly: try the account label first, then fall back to
-            // the auth-token type.
+            //Cache wallet package = chooser pick first, else label/token fallback
             var rawLabel = authorizationOperation.Authorization.AccountLabel;
-            var resolvedPackage = MwaWalletDiscovery.ResolvePackage(rawLabel, _authToken);
-            Debug.Log($"[MWA] Login store path: AccountLabel=" +
-                      (string.IsNullOrEmpty(rawLabel) ? "<empty>" : $"\"{rawLabel}\"") +
-                      $" -> resolved package=" +
-                      (string.IsNullOrEmpty(resolvedPackage) ? "<none>" : resolvedPackage));
+            var chosenPackage = MwaNativeChooser.ConsumeChosenPackage();
+            string resolvedPackage;
+            if (!string.IsNullOrEmpty(chosenPackage))
+            {
+                resolvedPackage = chosenPackage;
+                Debug.Log($"[MWA] Login store path: chooser-selected package={chosenPackage}" +
+                          (string.IsNullOrEmpty(rawLabel) ? "" : $" (label=\"{rawLabel}\")"));
+            }
+            else
+            {
+                resolvedPackage = MwaWalletDiscovery.ResolvePackage(rawLabel, _authToken);
+                Debug.Log($"[MWA] Login store path: AccountLabel=" +
+                          (string.IsNullOrEmpty(rawLabel) ? "<empty>" : $"\"{rawLabel}\"") +
+                          $" -> resolved package=" +
+                          (string.IsNullOrEmpty(resolvedPackage) ? "<none>" : resolvedPackage));
+            }
 
             await TryCacheWalletPackage(resolvedPackage);
 

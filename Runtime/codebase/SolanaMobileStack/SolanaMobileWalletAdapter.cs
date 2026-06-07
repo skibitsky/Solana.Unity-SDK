@@ -27,7 +27,16 @@ namespace Solana.Unity.SDK
     {
         private const string PrefKeyPublicKey = "solana_sdk.mwa.public_key";
         private const string PrefKeyAuthToken = "solana_sdk.mwa.auth_token";
-        
+        private const string PrefKeyAuthCacheVersion = "solana_sdk.mwa.auth_cache_version";
+
+        // Bump whenever a change alters the meaning of a cached authorization.
+        // v2 introduces the CAIP-2 `chain` fix: cached tokens minted before it may
+        // have been authorized as mainnet (MWA 2.0 wallets default to mainnet when
+        // `chain` is absent), and reauthorize does not re-send `chain`. On a version
+        // mismatch we drop the cache so the next login performs a fresh authorize.
+        private const int AuthCacheVersion = 2;
+
+
         private readonly SolanaMobileWalletAdapterOptions _walletOptions;
         
         private Transaction _currentTransaction;
@@ -65,6 +74,21 @@ namespace Solana.Unity.SDK
                 throw new Exception("SolanaMobileWalletAdapter can only be used on Android");
             }
             MigrateLegacyPrefKeys();
+            InvalidateStaleAuthCache();
+        }
+
+        // Clears cached credentials when they predate the current authorization
+        // semantics, so upgraded users self-heal instead of staying on a stale
+        // (possibly mainnet-defaulted) session until a manual disconnect.
+        private static void InvalidateStaleAuthCache()
+        {
+            if (PlayerPrefs.GetInt(PrefKeyAuthCacheVersion, 0) == AuthCacheVersion)
+                return;
+
+            PlayerPrefs.DeleteKey(PrefKeyPublicKey);
+            PlayerPrefs.DeleteKey(PrefKeyAuthToken);
+            PlayerPrefs.SetInt(PrefKeyAuthCacheVersion, AuthCacheVersion);
+            PlayerPrefs.Save();
         }
 
         private static void MigrateLegacyPrefKeys()

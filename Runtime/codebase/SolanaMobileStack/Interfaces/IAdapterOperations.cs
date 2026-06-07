@@ -9,7 +9,8 @@ using UnityEngine.Scripting;
 public interface IAdapterOperations
 {
     [Preserve]
-    public Task<AuthorizationResult> Authorize(Uri identityUri, Uri iconUri, string identityName, string rpcCluster);
+    // chain: optional CAIP-2 identifier (e.g. "solana:devnet") for MWA 2.0 wallets.
+    public Task<AuthorizationResult> Authorize(Uri identityUri, Uri iconUri, string identityName, string rpcCluster, string chain = null);
     [Preserve]
     public Task<AuthorizationResult> Reauthorize(Uri identityUri, Uri iconUri, string identityName, string authToken);
     [Preserve]

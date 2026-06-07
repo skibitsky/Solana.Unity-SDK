@@ -46,8 +46,8 @@ namespace Solana.Unity.SDK.Tests.EditMode.Contracts
             Assert.IsNotNull(method, "IAdapterOperations.Authorize must exist");
             Assert.AreEqual(typeof(Task<AuthorizationResult>), method.ReturnType,
                 "Authorize must return Task<AuthorizationResult>");
-            Assert.IsTrue(HasParams(method, typeof(Uri), typeof(Uri), typeof(string), typeof(string)),
-                "Authorize params must be (Uri identityUri, Uri iconUri, string identityName, string rpcCluster)");
+            Assert.IsTrue(HasParams(method, typeof(Uri), typeof(Uri), typeof(string), typeof(string), typeof(string)),
+                "Authorize params must be (Uri identityUri, Uri iconUri, string identityName, string rpcCluster, string chain)");
         }
 
         

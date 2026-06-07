@@ -21,15 +21,16 @@ public class MobileWalletAdapterClient: JsonRpc20Client, IAdapterOperations, IMe
     }
     
     [Preserve]
-    public Task<AuthorizationResult> Authorize(Uri identityUri, Uri iconUri, string identityName, string cluster)
+    public Task<AuthorizationResult> Authorize(Uri identityUri, Uri iconUri, string identityName, string cluster, string chain = null)
     {
         var request = PrepareAuthRequest(
             identityUri,
-            iconUri, 
-            identityName, 
+            iconUri,
+            identityName,
             cluster,
-            "authorize");
-        
+            "authorize",
+            chain);
+
         return SendRequest<AuthorizationResult>(request);
     }
 
@@ -71,7 +72,7 @@ public class MobileWalletAdapterClient: JsonRpc20Client, IAdapterOperations, IMe
         return SendRequest<SignedResult>(request);
     }
 
-    private JsonRequest PrepareAuthRequest(Uri uriIdentity, Uri icon, string name, string cluster, string method)
+    private JsonRequest PrepareAuthRequest(Uri uriIdentity, Uri icon, string name, string cluster, string method, string chain = null)
     {
         if (uriIdentity != null && !uriIdentity.IsAbsoluteUri)
         {
@@ -93,7 +94,8 @@ public class MobileWalletAdapterClient: JsonRpc20Client, IAdapterOperations, IMe
                     Icon = icon,
                     Name = name
                 },
-                Cluster = cluster
+                Cluster = cluster,
+                Chain = chain
             },
             Id = NextMessageId()
         };

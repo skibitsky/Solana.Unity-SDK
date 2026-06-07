@@ -40,6 +40,17 @@ namespace Solana.Unity.SDK
         public event Action OnWalletDisconnected;
         public event Action OnWalletReconnected;
 
+        // CAIP-2 chain identifiers for MWA 2.0 wallets (e.g. Seeker Seed Vault).
+        // Keyed to match RpcCluster / RPCNameMap. LocalNet has no standard CAIP-2
+        // value, so it maps to null and only the legacy "cluster" field is sent.
+        private static readonly Dictionary<int, string> ChainNameMap = new ()
+        {
+            { 0, "solana:mainnet" },
+            { 1, "solana:devnet" },
+            { 2, "solana:testnet" },
+            { 3, null },
+        };
+
         public SolanaMobileWalletAdapter(
             SolanaMobileWalletAdapterOptions solanaWalletOptions,
             RpcCluster rpcCluster = RpcCluster.DevNet, 
@@ -134,6 +145,7 @@ namespace Solana.Unity.SDK
             AuthorizationResult authorization = null;
             var localAssociationScenario = new LocalAssociationScenario();
             var cluster = RPCNameMap[(int)RpcCluster];
+            var chain = ChainNameMap[(int)RpcCluster];
             var result = await localAssociationScenario.StartAndExecute(
                 new List<Action<IAdapterOperations>>
                 {
@@ -142,7 +154,7 @@ namespace Solana.Unity.SDK
                         authorization = await client.Authorize(
                             new Uri(_walletOptions.identityUri),
                             new Uri(_walletOptions.iconUri, UriKind.Relative),
-                            _walletOptions.name, cluster);
+                            _walletOptions.name, cluster, chain);
                     }
                 }
             );
@@ -182,6 +194,7 @@ namespace Solana.Unity.SDK
                 _authToken = PlayerPrefs.GetString(PrefKeyAuthToken, null);
 
             var cluster = RPCNameMap[(int)RpcCluster];
+            var chain = ChainNameMap[(int)RpcCluster];
             SignedResult res = null;
             var localAssociationScenario = new LocalAssociationScenario();
             AuthorizationResult authorization = null;
@@ -195,7 +208,7 @@ namespace Solana.Unity.SDK
                             authorization = await client.Authorize(
                                 new Uri(_walletOptions.identityUri),
                                 new Uri(_walletOptions.iconUri, UriKind.Relative),
-                                _walletOptions.name, cluster);
+                                _walletOptions.name, cluster, chain);
                         }
                         else
                         {
@@ -344,6 +357,7 @@ namespace Solana.Unity.SDK
             var localAssociationScenario = new LocalAssociationScenario();
             AuthorizationResult authorization = null;
             var cluster = RPCNameMap[(int)RpcCluster];
+            var chain = ChainNameMap[(int)RpcCluster];
             var result = await localAssociationScenario.StartAndExecute(
                 new List<Action<IAdapterOperations>>
                 {
@@ -354,7 +368,7 @@ namespace Solana.Unity.SDK
                             authorization = await client.Authorize(
                                 new Uri(_walletOptions.identityUri),
                                 new Uri(_walletOptions.iconUri, UriKind.Relative),
-                                _walletOptions.name, cluster);
+                                _walletOptions.name, cluster, chain);
                         }
                         else
                         {

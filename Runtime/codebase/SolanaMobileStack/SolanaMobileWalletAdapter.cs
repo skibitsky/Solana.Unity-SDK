@@ -326,26 +326,18 @@ namespace Solana.Unity.SDK
             PlayerPrefs.Save();
             await _authCache.Set(_authToken);
 
-            //Cache wallet package = chooser pick first, else label/token fallback
-            var rawLabel = authorizationOperation.Authorization.AccountLabel;
             var chosenPackage = MwaNativeChooser.ConsumeChosenPackage();
-            string resolvedPackage;
             if (!string.IsNullOrEmpty(chosenPackage))
             {
-                resolvedPackage = chosenPackage;
+                var rawLabel = authorizationOperation.Authorization.AccountLabel;
                 Debug.Log($"[MWA] Login store path: chooser-selected package={chosenPackage}" +
                           (string.IsNullOrEmpty(rawLabel) ? "" : $" (label=\"{rawLabel}\")"));
+                await TryCacheWalletPackage(chosenPackage);
             }
             else
             {
-                resolvedPackage = MwaWalletDiscovery.ResolvePackage(rawLabel, _authToken);
-                Debug.Log($"[MWA] Login store path: AccountLabel=" +
-                          (string.IsNullOrEmpty(rawLabel) ? "<empty>" : $"\"{rawLabel}\"") +
-                          $" -> resolved package=" +
-                          (string.IsNullOrEmpty(resolvedPackage) ? "<none>" : resolvedPackage));
+                Debug.Log("[MWA] Login store path: no chooser package captured; wallet not cached.");
             }
-
-            await TryCacheWalletPackage(resolvedPackage);
 
             return new Account(string.Empty, publicKey);
         }

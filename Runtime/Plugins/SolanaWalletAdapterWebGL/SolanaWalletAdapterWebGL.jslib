@@ -203,9 +203,11 @@ mergeInto(LibraryManager.library, {
           error: data && data.message ? String(data.message) : null,
         };
         const json = JSON.stringify(payload);
-        const ptr = _malloc(lengthBytesUTF8(json) + 1);
-        stringToUTF8(json, ptr, lengthBytesUTF8(json) + 1);
+        const len = lengthBytesUTF8(json) + 1;
+        const ptr = _malloc(len);
+        stringToUTF8(json, ptr, len);
         {{{ makeDynCall('vi', 'callback') }}}(ptr);
+        _free(ptr);
       };
 
       const tryResolveProvider = () => {
@@ -288,4 +290,3 @@ mergeInto(LibraryManager.library, {
     }
   },
 });
-

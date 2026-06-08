@@ -67,6 +67,8 @@ namespace Solana.Unity.SDK
         public static SessionWallet GetSessionWallet(string publicKey, string privateKey, PublicKey targetProgram)
         {
             _externalWallet = Web3.Wallet;
+            if (_externalWallet?.ActiveRpcClient == null)
+                throw new InvalidOperationException("Web3.Wallet and its ActiveRpcClient must be initialized before creating a SessionWallet from raw keys.");
 
             var sessionAccount = new Account(privateKey, publicKey); 
             

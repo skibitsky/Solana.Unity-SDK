@@ -98,7 +98,7 @@ public class LocalAssociationScenario : IDisposable
                     Debug.Log($"[MWA] Invoking action {action.Method.Name}");
                     action.Invoke(_client);
                 
-                    lastResponse = await _responseTcs.Task;
+                    lastResponse = await AwaitWithCancellation(_responseTcs.Task, _cancellationToken);
                     _responseTcs = null;
 
                     _cancellationToken.ThrowIfCancellationRequested();
@@ -221,7 +221,7 @@ public class LocalAssociationScenario : IDisposable
             Debug.Log($"[MWA] Connect attempt {attempt}, state: {_webSocket.State}");
             _webSocket.Connect();
             
-            var success = await _wsConnected.Task;
+            var success = await AwaitWithCancellation(_wsConnected.Task, _cancellationToken);
             Debug.Log($"[MWA] Connect attempt {attempt} result, state: {_webSocket.State}");
             
             if (success)
@@ -254,27 +254,33 @@ public class LocalAssociationScenario : IDisposable
     private void OnWsClose(WebSocketCloseCode closeCode)
     {
         Debug.Log($"[MWA] WS Closed: {closeCode}");
-        if (closeCode == WebSocketCloseCode.Normal) 
+
+        if (_isConnecting)
+        {
+            _wsConnected?.TrySetResult(false);
+            return;
+        }
+
+        if (closeCode == WebSocketCloseCode.Normal)
             return;
 
-        if (!_isConnecting)
-        {
-            var exc = new Exception($"[MWA] WS closed unexpectedly: {closeCode}");
-            _responseTcs?.TrySetException(exc);
-            _tcs?.TrySetException(exc);
-        }
-        else
-        {
-            _wsConnected.TrySetResult(false);
-        }
+        var exc = new Exception($"[MWA] WS closed unexpectedly: {closeCode}");
+        _responseTcs?.TrySetException(exc);
+        _tcs?.TrySetException(exc);
     }
 
     private void OnWsError(string message)
     {
         if (_isConnecting)
+        {
             _wsConnected?.TrySetResult(false);
+        }
         else
-            _tcs?.TrySetException(new Exception($"[MWA] WS error: {message}"));
+        {
+            var exc = new Exception($"[MWA] WS error: {message}");
+            _responseTcs?.TrySetException(exc);
+            _tcs?.TrySetException(exc);
+        }
     }
 
     private void OnWsMessage(byte[] bytes)
@@ -306,8 +312,21 @@ public class LocalAssociationScenario : IDisposable
         catch (Exception ex)
         {
             Debug.Log($"[MWA] Message handler error: {ex}");
-            _responseTcs.TrySetException(ex);
+            _responseTcs?.TrySetException(ex);
+            _tcs?.TrySetException(ex);
+            _wsConnected?.TrySetException(ex);
         }
+    }
+
+    private static async Task<T> AwaitWithCancellation<T>(Task<T> task, CancellationToken ct)
+    {
+        var cancelTcs = new TaskCompletionSource<bool>();
+        using (ct.Register(() => cancelTcs.TrySetResult(true)))
+        {
+            if (await Task.WhenAny(task, cancelTcs.Task) != task)
+                throw new OperationCanceledException(ct);
+        }
+        return await task;
     }
 
     private Task WaitForKeyExchangeAsync(CancellationToken ct)

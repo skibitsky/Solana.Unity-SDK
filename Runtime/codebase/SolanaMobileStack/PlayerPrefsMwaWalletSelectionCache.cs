@@ -12,7 +12,7 @@ namespace Solana.Unity.SDK
 
         public PlayerPrefsMwaWalletSelectionCache(string key = DefaultKey)
         {
-            _key = key;
+            _key = string.IsNullOrEmpty(key) ? DefaultKey : key;
         }
 
         public Task<string> GetSelectedWalletPackage()

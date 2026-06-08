@@ -17,7 +17,10 @@ public final class MwaChooserHelper {
     // RECEIVER_NOT_EXPORTED (API 33) as literal for older compileSdk.
     private static final int RECEIVER_NOT_EXPORTED = 0x4;
 
+    private static final String EXTRA_NONCE = "chooser_nonce";
+
     private static volatile String sChosenPackage = null;
+    private static volatile String sChooserNonce = null;
     private static BroadcastReceiver sReceiver = null;
 
     private MwaChooserHelper() {}
@@ -32,9 +35,12 @@ public final class MwaChooserHelper {
     /** createChooser + IntentSender callback = launches MWA target intent */
     public static void launchWithChooser(Activity activity, Intent target, String title) {
         sChosenPackage = null;
+        sChooserNonce = java.util.UUID.randomUUID().toString();
         registerReceiver(activity.getApplicationContext());
 
-        Intent broadcast = new Intent(ACTION_CHOSEN).setPackage(activity.getPackageName());
+        Intent broadcast = new Intent(ACTION_CHOSEN)
+            .setPackage(activity.getPackageName())
+            .putExtra(EXTRA_NONCE, sChooserNonce);
 
         int flags = PendingIntent.FLAG_UPDATE_CURRENT;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -53,6 +59,10 @@ public final class MwaChooserHelper {
         sReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context ctx, Intent intent) {
+                String nonce = intent.getStringExtra(EXTRA_NONCE);
+                if (nonce == null || !nonce.equals(sChooserNonce)) {
+                    return;
+                }
                 ComponentName chosen = intent.getParcelableExtra(Intent.EXTRA_CHOSEN_COMPONENT);
                 if (chosen != null) {
                     sChosenPackage = chosen.getPackageName();

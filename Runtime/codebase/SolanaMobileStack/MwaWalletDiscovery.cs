@@ -25,7 +25,16 @@ namespace Solana.Unity.SDK
             if (cache == null)
                 return null;
 
-            var cached = await cache.GetSelectedWalletPackage();
+            string cached;
+            try
+            {
+                cached = await cache.GetSelectedWalletPackage();
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"[MWA][Discovery] Failed to read cached wallet package: {e.Message}. Falling back to chooser.");
+                return null;
+            }
             if (!string.IsNullOrEmpty(cached))
             {
                 Debug.Log($"[MWA][Discovery] Using cached wallet: {cached}");

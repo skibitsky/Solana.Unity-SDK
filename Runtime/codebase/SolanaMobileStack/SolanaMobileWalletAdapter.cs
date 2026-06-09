@@ -3,6 +3,7 @@ using System.Linq;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Solana.Unity.Rpc.Models;
+using Solana.Unity.SDK;
 using Solana.Unity.Wallet;
 using UnityEngine;
 using WebSocketSharp;
@@ -25,27 +26,47 @@ namespace Solana.Unity.SDK
     [Obsolete("Use SolanaWalletAdapter class instead, which is the cross platform wrapper.")]
     public class SolanaMobileWalletAdapter : WalletBase
     {
+        private sealed class MobileWalletAdapterLifecycleHook : MonoBehaviour
+        {
+            public event Action<bool> ApplicationFocusChanged;
+
+            private void OnApplicationFocus(bool hasFocus)
+            {
+                ApplicationFocusChanged?.Invoke(hasFocus);
+            }
+        }
+
         private const string PrefKeyPublicKey = "solana_sdk.mwa.public_key";
-        private const string PrefKeyAuthToken = "solana_sdk.mwa.auth_token";
+        // Single source of truth lives in PlayerPrefsAuthCache.DefaultKey.
+        // Kept here as a private alias because the legacy key migration
+        // below still touches PlayerPrefs directly. Live reads and writes
+        // for the auth token go through _authCache (see IMwaAuthCache).
+        private const string PrefKeyAuthToken = PlayerPrefsAuthCache.DefaultKey;
         
         private readonly SolanaMobileWalletAdapterOptions _walletOptions;
-        
+
         private Transaction _currentTransaction;
 
         private TaskCompletionSource<Account> _loginTaskCompletionSource;
         private TaskCompletionSource<Transaction> _signedTransactionTaskCompletionSource;
         private readonly WalletBase _internalWallet;
+        private readonly IMwaAuthCache _authCache;
+        private readonly IMwaWalletSelectionCache _walletSelectionCache;
         private string _authToken;
+        private bool _loginInProgress;
+        private static MobileWalletAdapterLifecycleHook _lifecycleHook;
 
         public event Action OnWalletDisconnected;
         public event Action OnWalletReconnected;
 
         public SolanaMobileWalletAdapter(
             SolanaMobileWalletAdapterOptions solanaWalletOptions,
-            RpcCluster rpcCluster = RpcCluster.DevNet, 
-            string customRpcUri = null, 
-            string customStreamingRpcUri = null, 
-            bool autoConnectOnStartup = false) : base(rpcCluster, customRpcUri, customStreamingRpcUri, autoConnectOnStartup
+            RpcCluster rpcCluster = RpcCluster.DevNet,
+            string customRpcUri = null,
+            string customStreamingRpcUri = null,
+            bool autoConnectOnStartup = false,
+            IMwaAuthCache authCache = null,
+            IMwaWalletSelectionCache walletSelectionCache = null) : base(rpcCluster, customRpcUri, customStreamingRpcUri, autoConnectOnStartup
         )
         {
             _walletOptions = solanaWalletOptions;
@@ -53,7 +74,167 @@ namespace Solana.Unity.SDK
             {
                 throw new Exception("SolanaMobileWalletAdapter can only be used on Android");
             }
+            _authCache = authCache ?? new PlayerPrefsAuthCache();
+            _walletSelectionCache = walletSelectionCache ?? new PlayerPrefsMwaWalletSelectionCache();
             MigrateLegacyPrefKeys();
+            EnsureLifecycleHook();
+            _lifecycleHook.ApplicationFocusChanged -= OnApplicationFocusChanged;
+            _lifecycleHook.ApplicationFocusChanged += OnApplicationFocusChanged;
+        }
+
+        private static void EnsureLifecycleHook()
+        {
+            if (_lifecycleHook != null)
+            {
+                return;
+            }
+
+            var hookObject = new GameObject("[SolanaMobileWalletAdapterLifecycle]");
+            hookObject.hideFlags = HideFlags.HideAndDontSave;
+            UnityEngine.Object.DontDestroyOnLoad(hookObject);
+            _lifecycleHook = hookObject.AddComponent<MobileWalletAdapterLifecycleHook>();
+        }
+
+        private async void OnApplicationFocusChanged(bool hasFocus)
+        {
+            try
+            {
+                await HandleApplicationFocus(hasFocus);
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[MWA] OnApplicationFocus handler failed: {e.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Resolves the target wallet package via cache → discovery → native picker.
+        /// Returns the package name to target, or null if no wallet was found/selected.
+        /// </summary>
+        private async Task<string> ResolveWalletPackage()
+        {
+            return await MwaWalletDiscovery.ResolveWalletPackage(_walletSelectionCache);
+        }
+
+        /// <summary>
+        /// Creates a <see cref="LocalAssociationScenario"/> targeting the resolved
+        /// wallet package. On first use this may show a native picker if multiple
+        /// wallets are installed; subsequent calls use the cached selection.
+        /// </summary>
+        private async Task<LocalAssociationScenario> CreateTargetedScenario()
+        {
+            var package = await ResolveWalletPackage();
+            Debug.Log($"[MWA] Resolved target wallet package: " +
+                      (string.IsNullOrEmpty(package) ? "<none>" : package));
+            return new LocalAssociationScenario(package);
+        }
+
+        /// <summary>
+        /// Caches the wallet package name identified during the WebSocket
+        /// session so subsequent connections can target it directly.
+        /// </summary>
+        private async Task TryCacheWalletPackage(string walletPackage)
+        {
+            if (string.IsNullOrEmpty(walletPackage))
+                return;
+
+            var existing = await _walletSelectionCache.GetSelectedWalletPackage();
+            if (!string.IsNullOrEmpty(existing))
+            {
+                Debug.Log($"[MWA] TryCacheWalletPackage: keeping existing cached package '{existing}', skipping store of '{walletPackage}'");
+                return;
+            }
+
+            await _walletSelectionCache.SetSelectedWalletPackage(walletPackage);
+        }
+
+        /// <summary>
+        /// Runs a privileged operation (sign transactions / sign messages) against
+        /// the targeted wallet, re-using the cached auth token when possible so the
+        /// wallet only ever surfaces for the operation itself — never for a
+        /// standalone (re)authorization.
+        /// </summary>
+        /// <remarks>
+        /// Honors the "no wallet popups unless necessary" rule. Phantom rejects a
+        /// bare <c>sign_transactions</c> ("auth_token not valid for signing"), so a
+        /// session must be (re)authorized before the operation. We do that in the
+        /// SAME session as the operation, so the wallet surfaces once:
+        /// <list type="bullet">
+        /// <item>Token present → [reauthorize, op]. With a valid token reauthorize
+        /// is silent (≈250 ms, no prompt); only the operation's own prompt shows.</item>
+        /// <item>Reauthorize rejected (token expired/revoked) → [authorize, op].</item>
+        /// <item>No token → [authorize, op].</item>
+        /// </list>
+        /// Do NOT precede this with an un-authorized "direct" attempt: a rejected
+        /// bare sign knocks Phantom out of its authorized state and forces the
+        /// following reauthorize to prompt.
+        /// </remarks>
+        private async Task RunPrivileged(Action<IAdapterOperations> privilegedAction, string label)
+        {
+            if (_authToken.IsNullOrEmpty() && _walletOptions.keepConnectionAlive)
+                _authToken = await _authCache.Get();
+
+            // Token present: reauthorize (silent when the token is valid) and run the
+            // operation in one session, so only the operation itself prompts.
+            if (!_authToken.IsNullOrEmpty())
+            {
+                var reauthorize = new ReauthorizeOperation(_walletOptions, _authToken);
+                using (var scenario = await CreateTargetedScenario())
+                {
+                    var actions = reauthorize.BuildActions();
+                    actions.Add(privilegedAction);
+                    var result = await scenario.StartAndExecute(actions);
+                    if (result.WasSuccessful)
+                    {
+                        await PersistRefreshedToken(reauthorize.Authorization);
+                        return;
+                    }
+
+                    // Reauthorize succeeded but the operation failed (e.g. the user
+                    // declined): surface as-is rather than re-prompting with authorize.
+                    if (reauthorize.Authorization != null)
+                    {
+                        Debug.LogError($"[MWA] {label} failed: {result.Error?.Message}");
+                        throw new Exception(result.Error?.Message ?? $"[MWA] {label} failed");
+                    }
+
+                    // Token expired/revoked — a fresh authorization is now necessary.
+                    Debug.LogWarning($"[MWA] {label}: cached token rejected, re-authorizing");
+                    _authToken = null;
+                }
+            }
+
+            // No usable token: authorize (prompts) and run the operation in one session.
+            var authorize = new AuthorizeOperation(_walletOptions, RPCNameMap[(int)RpcCluster]);
+            using (var scenario = await CreateTargetedScenario())
+            {
+                var actions = authorize.BuildActions();
+                actions.Add(privilegedAction);
+                var authResult = await scenario.StartAndExecute(actions);
+                if (!authResult.WasSuccessful)
+                {
+                    Debug.LogError($"[MWA] {label} failed: {authResult.Error?.Message}");
+                    throw new Exception(authResult.Error?.Message ?? $"[MWA] {label} failed");
+                }
+                if (authorize.Authorization == null)
+                    throw new Exception($"[MWA] {label}: authorization was not populated");
+
+                await PersistRefreshedToken(authorize.Authorization);
+            }
+        }
+
+        /// <summary>
+        /// Persists a refreshed auth token returned by authorize/reauthorize.
+        /// No-op when the wallet returned no token or connection caching is off.
+        /// </summary>
+        private async Task PersistRefreshedToken(AuthorizationResult authorization)
+        {
+            if (authorization == null || string.IsNullOrEmpty(authorization.AuthToken))
+                return;
+
+            _authToken = authorization.AuthToken;
+            if (_walletOptions.keepConnectionAlive)
+                await _authCache.Set(_authToken);
         }
 
         private static void MigrateLegacyPrefKeys()
@@ -77,95 +258,87 @@ namespace Solana.Unity.SDK
 
         protected override async Task<Account> _Login(string password = null)
         {
+            _loginInProgress = true;
+            try
+            {
+                return await _LoginInternal(password);
+            }
+            finally
+            {
+                _loginInProgress = false;
+            }
+        }
+
+        private async Task<Account> _LoginInternal(string password = null)
+        {
+            // Fast path: if we have cached credentials, return immediately without
+            // opening the wallet. We deliberately do NOT reauthorize here — a
+            // standalone reauthorize would briefly surface the wallet for no
+            // user-visible reason. Token validity is re-checked lazily on the next
+            // operation that actually needs the wallet (see RunPrivileged).
             if (_walletOptions.keepConnectionAlive)
             {
-                string pk = PlayerPrefs.GetString(PrefKeyPublicKey, null);
-                string authToken = PlayerPrefs.GetString(PrefKeyAuthToken, null);
+                var pk = PlayerPrefs.GetString(PrefKeyPublicKey, null);
+                var authToken = await _authCache.Get();
+
                 if (!pk.IsNullOrEmpty() && !authToken.IsNullOrEmpty())
                 {
-                    string reauthPublicKey = null;
-                    // TODO: change to using var after PR #260 merges (IDisposable not yet on LocalAssociationScenario)
-                    var reauthorizeScenario = new LocalAssociationScenario();
-                    var reauthorizeResult = await reauthorizeScenario.StartAndExecute(
-                        new List<Action<IAdapterOperations>>
-                        {
-                            async client =>
-                            {
-                                var reauth = await client.Reauthorize(
-                                    new Uri(_walletOptions.identityUri),
-                                    new Uri(_walletOptions.iconUri, UriKind.Relative),
-                                    _walletOptions.name, authToken);
-                                if (reauth != null && !string.IsNullOrEmpty(reauth.AuthToken))
-                                {
-                                    _authToken = reauth.AuthToken;
-                                    reauthPublicKey = reauth.PublicKey != null
-                                        ? new PublicKey(reauth.PublicKey).ToString()
-                                        : null;
-                                }
-                            }
-                        }
-                    );
-                    if (reauthorizeResult.WasSuccessful)
-                    {
-                        if (string.IsNullOrEmpty(_authToken))
-                        {
-                            // Reauthorize RPC succeeded but wallet returned no token - treat as failure
-                            // Fall through to cleanup below
-                        }
-                        else
-                        {
-                            PlayerPrefs.SetString(PrefKeyAuthToken, _authToken);
-                            PlayerPrefs.Save();
-                            var resolvedKey = !string.IsNullOrEmpty(reauthPublicKey) ? reauthPublicKey : pk;
-                            return new Account(string.Empty, new PublicKey(resolvedKey));
-                        }
-                    }
-                    // Reauthorize failed or returned empty token - clear cached credentials
-                    PlayerPrefs.DeleteKey(PrefKeyPublicKey);
-                    PlayerPrefs.DeleteKey(PrefKeyAuthToken);
-                    PlayerPrefs.Save();
+                    _authToken = authToken;
+                    return new Account(string.Empty, new PublicKey(pk));
                 }
-                else if (!pk.IsNullOrEmpty())
+
+                if (!pk.IsNullOrEmpty())
                 {
+                    // Inconsistent state: pk persisted but no auth token. Wipe
+                    // so a re-entrant Login on the same instance cannot reuse stale data.
+                    _authToken = null;
                     PlayerPrefs.DeleteKey(PrefKeyPublicKey);
                     PlayerPrefs.Save();
                 }
             }
-            AuthorizationResult authorization = null;
-            var localAssociationScenario = new LocalAssociationScenario();
+
+            using var localAssociationScenario = await CreateTargetedScenario();
+
             var cluster = RPCNameMap[(int)RpcCluster];
-            var result = await localAssociationScenario.StartAndExecute(
-                new List<Action<IAdapterOperations>>
-                {
-                    async client =>
-                    {
-                        authorization = await client.Authorize(
-                            new Uri(_walletOptions.identityUri),
-                            new Uri(_walletOptions.iconUri, UriKind.Relative),
-                            _walletOptions.name, cluster);
-                    }
-                }
-            );
+            var authorizationOperation = new AuthorizeOperation(_walletOptions, cluster);
+            
+            var result = await localAssociationScenario.StartAndExecute(authorizationOperation.BuildActions());
             if (!result.WasSuccessful)
             {
                 Debug.LogError(result.Error.Message);
                 throw new Exception(result.Error.Message);
             }
-            if (authorization == null)
+            
+            if (authorizationOperation.Authorization == null)
             {
                 throw new Exception("[MWA] Login: authorization was not populated");
             }
-            var publicKey = new PublicKey(authorization.PublicKey);
-            if (!string.IsNullOrEmpty(authorization.AuthToken))
+            
+            var publicKey = new PublicKey(authorizationOperation.Authorization.PublicKey);
+            if (string.IsNullOrEmpty(authorizationOperation.Authorization.AuthToken))
+                return new Account(string.Empty, publicKey);
+
+            _authToken = authorizationOperation.Authorization.AuthToken;
+            if (!_walletOptions.keepConnectionAlive)
+                return new Account(string.Empty, publicKey);
+
+            PlayerPrefs.SetString(PrefKeyPublicKey, publicKey.ToString());
+            PlayerPrefs.Save();
+            await _authCache.Set(_authToken);
+
+            var chosenPackage = MwaNativeChooser.ConsumeChosenPackage();
+            if (!string.IsNullOrEmpty(chosenPackage))
             {
-                _authToken = authorization.AuthToken;
-                if (_walletOptions.keepConnectionAlive)
-                {
-                    PlayerPrefs.SetString(PrefKeyPublicKey, publicKey.ToString());
-                    PlayerPrefs.SetString(PrefKeyAuthToken, _authToken);
-                    PlayerPrefs.Save();
-                }
+                var rawLabel = authorizationOperation.Authorization.AccountLabel;
+                Debug.Log($"[MWA] Login store path: chooser-selected package={chosenPackage}" +
+                          (string.IsNullOrEmpty(rawLabel) ? "" : $" (label=\"{rawLabel}\")"));
+                await TryCacheWalletPackage(chosenPackage);
             }
+            else
+            {
+                Debug.Log("[MWA] Login store path: no chooser package captured; wallet not cached.");
+            }
+
             return new Account(string.Empty, publicKey);
         }
 
@@ -175,89 +348,81 @@ namespace Solana.Unity.SDK
             return result[0];
         }
 
-
         protected override async Task<Transaction[]> _SignAllTransactions(Transaction[] transactions)
         {
-            if (_authToken.IsNullOrEmpty() && _walletOptions.keepConnectionAlive)
-                _authToken = PlayerPrefs.GetString(PrefKeyAuthToken, null);
-
-            var cluster = RPCNameMap[(int)RpcCluster];
             SignedResult res = null;
-            var localAssociationScenario = new LocalAssociationScenario();
-            AuthorizationResult authorization = null;
-            var result = await localAssociationScenario.StartAndExecute(
-                new List<Action<IAdapterOperations>>
-                {
-                    async client =>
-                    {
-                        if (_authToken.IsNullOrEmpty())
-                        {
-                            authorization = await client.Authorize(
-                                new Uri(_walletOptions.identityUri),
-                                new Uri(_walletOptions.iconUri, UriKind.Relative),
-                                _walletOptions.name, cluster);
-                        }
-                        else
-                        {
-                            authorization = await client.Reauthorize(
-                                new Uri(_walletOptions.identityUri),
-                                new Uri(_walletOptions.iconUri, UriKind.Relative),
-                                _walletOptions.name, _authToken);   
-                        }
-                    },
-                    async client =>
-                    {
-                        res = await client.SignTransactions(transactions.Select(transaction => transaction.Serialize()).ToList());
-                    }
-                }
-            );
-            if (!result.WasSuccessful)
+            await RunPrivileged(async client =>
             {
-                Debug.LogError(result.Error.Message);
-                throw new Exception(result.Error.Message);
-            }
-            if (authorization == null)
-            {
-                throw new Exception("[MWA] SignAllTransactions: authorization was not populated");
-            }
+                res = await client.SignTransactions(
+                    transactions.Select(t => t.Serialize()).ToList());
+            }, "SignAllTransactions");
+
             if (res == null)
-            {
                 throw new Exception("[MWA] SignAllTransactions: signed payloads were not populated");
-            }
-            if (!string.IsNullOrEmpty(authorization.AuthToken))
-            {
-                _authToken = authorization.AuthToken;
-                if (_walletOptions.keepConnectionAlive)
-                {
-                    PlayerPrefs.SetString(PrefKeyAuthToken, _authToken);
-                    PlayerPrefs.Save();
-                }
-            }
-            return res.SignedPayloads.Select(transaction => Transaction.Deserialize(transaction)).ToArray();
+
+            return res.SignedPayloads
+                .Select(transaction => Transaction.Deserialize(transaction)).ToArray();
         }
 
 
+        /// <summary>
+        /// Clears the in-memory token, the cached public key in PlayerPrefs,
+        /// and the auth token stored in <see cref="IMwaAuthCache"/>. Does
+        /// NOT call <c>deauthorize</c> on the wallet side. Use
+        /// <see cref="DisconnectWallet"/> when the wallet-side session also
+        /// needs to be revoked.
+        ///
+        /// Stays synchronous to keep the <see cref="WalletBase"/> override
+        /// signature stable. The cache <see cref="IMwaAuthCache.Clear"/>
+        /// call is awaited synchronously, so custom cache impls must not
+        /// block on UI or network here.
+        /// </summary>
         public override void Logout()
         {
             base.Logout();
             PlayerPrefs.DeleteKey(PrefKeyPublicKey);
-            _authToken = null;
-            PlayerPrefs.DeleteKey(PrefKeyAuthToken);
             PlayerPrefs.Save();
+            _authToken = null;
+            try
+            {
+                // Custom IMwaAuthCache impls (Keystore, EncryptedSharedPreferences, etc.) can
+                // throw on backend errors. Swallow here so DisconnectWallet still fires
+                // OnWalletDisconnected and the rest of the logout sequence completes.
+                _authCache.Clear().GetAwaiter().GetResult();
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[MWA] Auth cache clear failed during Logout: {e}");
+            }
+
+            try
+            {
+                _walletSelectionCache.ClearSelectedWalletPackage().GetAwaiter().GetResult();
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[MWA] Wallet selection cache clear failed during Logout: {e}");
+            }
         }
 
         public async Task DisconnectWallet()
         {
             string authToken = _authToken;
             if (authToken.IsNullOrEmpty())
-                authToken = PlayerPrefs.GetString(PrefKeyAuthToken, null);
+                authToken = await _authCache.Get();
 
-            if (!authToken.IsNullOrEmpty())
+            // Deauthorize must go straight to the wallet that issued the token.
+            // If we can't resolve that exact package (none cached, or the wallet
+            // was uninstalled), do NOT fall back to an untargeted intent — that
+            // would pop the OS wallet chooser, which makes no sense for a
+            // disconnect. Skip the remote revoke and just clear local state.
+            string targetPackage = await ResolveWalletPackage();
+
+            if (!authToken.IsNullOrEmpty() && !string.IsNullOrEmpty(targetPackage))
             {
                 try
                 {
-                    // TODO: change to using var after PR #260 merges (IDisposable not yet on LocalAssociationScenario)
-                    var localAssociationScenario = new LocalAssociationScenario();
+                    using var localAssociationScenario = new LocalAssociationScenario(targetPackage);
                     var result = await localAssociationScenario.StartAndExecute(
                         new List<Action<IAdapterOperations>>
                         {
@@ -276,6 +441,12 @@ namespace Solana.Unity.SDK
                 {
                     Debug.LogWarning($"[MWA] Deauthorize transport failed (best-effort): {e}");
                 }
+            }
+            else
+            {
+                Debug.Log("[MWA] DisconnectWallet: no targetable wallet package " +
+                          "(none cached or token already gone); skipping remote deauthorize, " +
+                          "clearing local session only.");
             }
 
             Logout();
@@ -304,11 +475,40 @@ namespace Solana.Unity.SDK
             }
         }
 
+        /// <summary>
+        /// Handles app focus resume for Android MWA flows.
+        /// Call this from a MonoBehaviour's OnApplicationFocus callback.
+        /// When focus returns and cached credentials exist, attempts a silent
+        /// reconnect only if no account is currently set.
+        /// </summary>
+        public async Task HandleApplicationFocus(bool hasFocus)
+        {
+            if (!hasFocus || !_walletOptions.keepConnectionAlive || Account != null || _loginInProgress)
+            {
+                return;
+            }
+
+            var cachedPublicKey = PlayerPrefs.GetString(PrefKeyPublicKey, null);
+            var cachedAuthToken = await _authCache.Get();
+            if (cachedPublicKey.IsNullOrEmpty() || cachedAuthToken.IsNullOrEmpty())
+            {
+                return;
+            }
+
+            try
+            {
+                await ReconnectWallet();
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning($"[MWA] HandleApplicationFocus reconnect failed: {e.Message}");
+            }
+        }
+
         public async Task<CapabilitiesResult> GetCapabilities()
         {
             CapabilitiesResult capabilities = null;
-            // TODO: change to using var after PR #260 merges (IDisposable not yet on LocalAssociationScenario)
-            var localAssociationScenario = new LocalAssociationScenario();
+            using var localAssociationScenario = await CreateTargetedScenario();
             var result = await localAssociationScenario.StartAndExecute(
                 new List<Action<IAdapterOperations>>
                 {
@@ -332,69 +532,23 @@ namespace Solana.Unity.SDK
 
         public override async Task<byte[]> SignMessage(byte[] message)
         {
-            if (_authToken.IsNullOrEmpty() && _walletOptions.keepConnectionAlive)
-                _authToken = PlayerPrefs.GetString(PrefKeyAuthToken, null);
-
             string cachedPk = Account?.PublicKey?.ToString()
                 ?? PlayerPrefs.GetString(PrefKeyPublicKey, null);
             if (string.IsNullOrEmpty(cachedPk))
                 throw new Exception("[MWA] Cannot sign message: no account available");
 
             SignedResult signedMessages = null;
-            var localAssociationScenario = new LocalAssociationScenario();
-            AuthorizationResult authorization = null;
-            var cluster = RPCNameMap[(int)RpcCluster];
-            var result = await localAssociationScenario.StartAndExecute(
-                new List<Action<IAdapterOperations>>
-                {
-                    async client =>
-                    {
-                        if (_authToken.IsNullOrEmpty())
-                        {
-                            authorization = await client.Authorize(
-                                new Uri(_walletOptions.identityUri),
-                                new Uri(_walletOptions.iconUri, UriKind.Relative),
-                                _walletOptions.name, cluster);
-                        }
-                        else
-                        {
-                            authorization = await client.Reauthorize(
-                                new Uri(_walletOptions.identityUri),
-                                new Uri(_walletOptions.iconUri, UriKind.Relative),
-                                _walletOptions.name, _authToken);   
-                        }
-                    },
-                    async client =>
-                    {
-                        signedMessages = await client.SignMessages(
-                            messages: new List<byte[]> { message },
-                            addresses: new List<byte[]> { new PublicKey(cachedPk).KeyBytes }
-                        );
-                    }
-                }
-            );
-            if (!result.WasSuccessful)
+            await RunPrivileged(async client =>
             {
-                Debug.LogError(result.Error.Message);
-                throw new Exception(result.Error.Message);
-            }
-            if (authorization == null)
-            {
-                throw new Exception("[MWA] SignMessage: authorization was not populated");
-            }
+                signedMessages = await client.SignMessages(
+                    messages: new List<byte[]> { message },
+                    addresses: new List<byte[]> { new PublicKey(cachedPk).KeyBytes }
+                );
+            }, "SignMessage");
+
             if (signedMessages == null)
-            {
                 throw new Exception("[MWA] SignMessage: signed payloads were not populated");
-            }
-            if (!string.IsNullOrEmpty(authorization.AuthToken))
-            {
-                _authToken = authorization.AuthToken;
-                if (_walletOptions.keepConnectionAlive)
-                {
-                    PlayerPrefs.SetString(PrefKeyAuthToken, _authToken);
-                    PlayerPrefs.Save();
-                }
-            }
+
             return signedMessages.SignedPayloadsBytes[0];
         }
 
@@ -402,5 +556,63 @@ namespace Solana.Unity.SDK
         {
             throw new NotImplementedException("Can't create a new account in phantom wallet");
         }
+
+    }
+}
+
+internal sealed class AuthorizeOperation
+{
+    private readonly SolanaMobileWalletAdapterOptions _opts;
+    private readonly string _cluster;
+
+    public AuthorizationResult Authorization { get; private set; }
+
+    public AuthorizeOperation(SolanaMobileWalletAdapterOptions opts, string cluster)
+    {
+        _opts = opts;
+        _cluster = cluster;
+    }
+
+    public List<Action<IAdapterOperations>> BuildActions()
+    {
+        return new List<Action<IAdapterOperations>>
+        {
+            async client =>
+            {
+                Authorization = await client.Authorize(
+                    new Uri(_opts.identityUri),
+                    new Uri(_opts.iconUri, UriKind.Relative),
+                    _opts.name,
+                    _cluster);
+            }
+        };
+    }
+}
+
+internal sealed class ReauthorizeOperation
+{
+    private readonly SolanaMobileWalletAdapterOptions _opts;
+    private readonly string _authToken;
+    
+    public AuthorizationResult Authorization { get; private set; }
+
+    public ReauthorizeOperation(SolanaMobileWalletAdapterOptions opts, string authToken)
+    {
+        _opts = opts;
+        _authToken = authToken;
+    }
+
+    public List<Action<IAdapterOperations>> BuildActions()
+    {
+        return new List<Action<IAdapterOperations>>
+        {
+            async client =>
+            {
+                Authorization = await client.Reauthorize(
+                    new Uri(_opts.identityUri),
+                    new Uri(_opts.iconUri, UriKind.Relative),
+                    _opts.name, _authToken);
+            }
+        };
     }
 }

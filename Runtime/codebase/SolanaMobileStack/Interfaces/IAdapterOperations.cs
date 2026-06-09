@@ -12,7 +12,11 @@ public interface IAdapterOperations
     // chain: optional CAIP-2 identifier (e.g. "solana:devnet") for MWA 2.0 wallets.
     public Task<AuthorizationResult> Authorize(Uri identityUri, Uri iconUri, string identityName, string rpcCluster, string chain = null);
     [Preserve]
-    public Task<AuthorizationResult> Reauthorize(Uri identityUri, Uri iconUri, string identityName, string authToken);
+    // rpcCluster/chain: MWA 2.0 requires the network identifier on reauthorize too.
+    // The spec deprecates the standalone reauthorize in favour of authorize carrying an
+    // auth_token; when chain is absent the wallet (e.g. Seeker Seed Vault) defaults the
+    // re-established session to solana:mainnet, causing a "Network mismatch" at sign time.
+    public Task<AuthorizationResult> Reauthorize(Uri identityUri, Uri iconUri, string identityName, string authToken, string rpcCluster = null, string chain = null);
     [Preserve]
     public Task Deauthorize(string authToken);
     [Preserve]

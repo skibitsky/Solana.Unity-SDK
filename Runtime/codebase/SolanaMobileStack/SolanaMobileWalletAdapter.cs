@@ -189,7 +189,8 @@ namespace Solana.Unity.SDK
             // operation in one session, so only the operation itself prompts.
             if (!_authToken.IsNullOrEmpty())
             {
-                var reauthorize = new ReauthorizeOperation(_walletOptions, _authToken);
+                var reauthorize = new ReauthorizeOperation(
+                    _walletOptions, _authToken, RPCNameMap[(int)RpcCluster], ChainNameMap[(int)RpcCluster]);
                 using (var scenario = await CreateTargetedScenario())
                 {
                     var actions = reauthorize.BuildActions();
@@ -609,13 +610,17 @@ internal sealed class ReauthorizeOperation
 {
     private readonly SolanaMobileWalletAdapterOptions _opts;
     private readonly string _authToken;
-    
+    private readonly string _cluster;
+    private readonly string _chain;
+
     public AuthorizationResult Authorization { get; private set; }
 
-    public ReauthorizeOperation(SolanaMobileWalletAdapterOptions opts, string authToken)
+    public ReauthorizeOperation(SolanaMobileWalletAdapterOptions opts, string authToken, string cluster = null, string chain = null)
     {
         _opts = opts;
         _authToken = authToken;
+        _cluster = cluster;
+        _chain = chain;
     }
 
     public List<Action<IAdapterOperations>> BuildActions()
@@ -627,7 +632,7 @@ internal sealed class ReauthorizeOperation
                 Authorization = await client.Reauthorize(
                     new Uri(_opts.identityUri),
                     new Uri(_opts.iconUri, UriKind.Relative),
-                    _opts.name, _authToken);
+                    _opts.name, _authToken, _cluster, _chain);
             }
         };
     }

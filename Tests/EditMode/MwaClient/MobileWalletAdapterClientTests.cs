@@ -120,6 +120,40 @@ namespace Solana.Unity.SDK.Tests.EditMode.MwaClient
         }
 
         [Test]
+        public void Authorize_SendsJsonRpc_WithCorrectChain()
+        {
+            // Arrange
+            var identityUri = new Uri("https://example.com");
+            const string cluster = "devnet";
+            const string chain = "solana:devnet";
+
+            // Act
+            _ = _client.Authorize(identityUri, null, "TestApp", cluster, chain);
+
+            // Assert
+            var request = DecodeLastRequest();
+            Assert.AreEqual(chain, request.Params.Chain,
+                "Params.Chain must match the supplied CAIP-2 chain string");
+        }
+
+        [Test]
+        public void Authorize_OmitsChain_WhenChainIsNull()
+        {
+            // Arrange
+            var identityUri = new Uri("https://example.com");
+            const string cluster = "mainnet-beta";
+
+            // Act: no chain supplied (e.g. LocalNet) — Chain must stay null so
+            // NullValueHandling.Ignore drops it from the serialized request.
+            _ = _client.Authorize(identityUri, null, "TestApp", cluster);
+
+            // Assert
+            var request = DecodeLastRequest();
+            Assert.IsNull(request.Params.Chain,
+                "Params.Chain must be null when no chain is supplied");
+        }
+
+        [Test]
         public void Authorize_MessageIds_AreIncrementing()
         {
             // Arrange

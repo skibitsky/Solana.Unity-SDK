@@ -120,6 +120,40 @@ namespace Solana.Unity.SDK.Tests.EditMode.MwaClient
         }
 
         [Test]
+        public void Authorize_SendsJsonRpc_WithCorrectChain()
+        {
+            // Arrange
+            var identityUri = new Uri("https://example.com");
+            const string cluster = "devnet";
+            const string chain = "solana:devnet";
+
+            // Act
+            _ = _client.Authorize(identityUri, null, "TestApp", cluster, chain);
+
+            // Assert
+            var request = DecodeLastRequest();
+            Assert.AreEqual(chain, request.Params.Chain,
+                "Params.Chain must match the supplied CAIP-2 chain string");
+        }
+
+        [Test]
+        public void Authorize_OmitsChain_WhenChainIsNull()
+        {
+            // Arrange
+            var identityUri = new Uri("https://example.com");
+            const string cluster = "mainnet-beta";
+
+            // Act: no chain supplied (e.g. LocalNet) — Chain must stay null so
+            // NullValueHandling.Ignore drops it from the serialized request.
+            _ = _client.Authorize(identityUri, null, "TestApp", cluster);
+
+            // Assert
+            var request = DecodeLastRequest();
+            Assert.IsNull(request.Params.Chain,
+                "Params.Chain must be null when no chain is supplied");
+        }
+
+        [Test]
         public void Authorize_MessageIds_AreIncrementing()
         {
             // Arrange
@@ -176,8 +210,10 @@ namespace Solana.Unity.SDK.Tests.EditMode.MwaClient
        
         // Reauthorize
         [Test]
-        public void Reauthorize_SendsJsonRpc_WithCorrectMethod()
+        public void Reauthorize_SendsJsonRpc_AsAuthorizeWithAuthToken()
         {
+            // MWA 2.0 deprecated the standalone `reauthorize` method; reauthorization is
+            // performed via `authorize` carrying an auth_token.
             // Arrange
             var identityUri = new Uri("https://example.com");
             const string authToken = "test-auth-token-abc123";
@@ -187,8 +223,8 @@ namespace Solana.Unity.SDK.Tests.EditMode.MwaClient
 
             // Assert
             var request = DecodeLastRequest();
-            Assert.AreEqual("reauthorize", request.Method,
-                "Method must be 'reauthorize'");
+            Assert.AreEqual("authorize", request.Method,
+                "Method must be 'authorize' (MWA 2.0 reauthorize-via-authorize)");
         }
 
         [Test]
@@ -205,6 +241,25 @@ namespace Solana.Unity.SDK.Tests.EditMode.MwaClient
             var request = DecodeLastRequest();
             Assert.AreEqual(authToken, request.Params.AuthToken,
                 "Params.AuthToken must match the supplied auth token");
+        }
+
+        [Test]
+        public void Reauthorize_SendsJsonRpc_WithChain()
+        {
+            // The chain MUST be forwarded on reauthorize, or the wallet defaults the
+            // re-established session to solana:mainnet (Network mismatch at sign time).
+            // Arrange
+            var identityUri = new Uri("https://example.com");
+            const string authToken = "test-auth-token-abc123";
+            const string chain = "solana:devnet";
+
+            // Act
+            _ = _client.Reauthorize(identityUri, null, "TestApp", authToken, "devnet", chain);
+
+            // Assert
+            var request = DecodeLastRequest();
+            Assert.AreEqual(chain, request.Params.Chain,
+                "Params.Chain must match the supplied CAIP-2 chain string on reauthorize");
         }
     }
 }

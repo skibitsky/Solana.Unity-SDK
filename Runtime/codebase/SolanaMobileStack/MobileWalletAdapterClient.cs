@@ -21,27 +21,35 @@ public class MobileWalletAdapterClient: JsonRpc20Client, IAdapterOperations, IMe
     }
     
     [Preserve]
-    public Task<AuthorizationResult> Authorize(Uri identityUri, Uri iconUri, string identityName, string cluster)
+    public Task<AuthorizationResult> Authorize(Uri identityUri, Uri iconUri, string identityName, string cluster, string chain = null)
     {
         var request = PrepareAuthRequest(
             identityUri,
-            iconUri, 
-            identityName, 
+            iconUri,
+            identityName,
             cluster,
-            "authorize");
-        
+            "authorize",
+            chain);
+
         return SendRequest<AuthorizationResult>(request);
     }
 
-    public Task<AuthorizationResult> Reauthorize(Uri identityUri, Uri iconUri, string identityName, string authToken)
+    public Task<AuthorizationResult> Reauthorize(Uri identityUri, Uri iconUri, string identityName, string authToken, string cluster = null, string chain = null)
     {
+        // MWA 2.0 deprecated the standalone `reauthorize` method in favour of `authorize`
+        // carrying an `auth_token`. The `chain` MUST be re-sent here: when it is absent the
+        // wallet (e.g. Seeker Seed Vault) defaults the re-established session to
+        // solana:mainnet, producing a "Network mismatch" at sign time even though the
+        // original authorize was devnet. When the chain matches the token's binding the
+        // wallet silently reuses the existing auth_token (no extra user prompt).
         var request = PrepareAuthRequest(
             identityUri,
-            iconUri, 
-            identityName, 
-            null,
-            "reauthorize");
-        
+            iconUri,
+            identityName,
+            cluster,
+            "authorize",
+            chain);
+
         request.Params.AuthToken = authToken;
 
         return SendRequest<AuthorizationResult>(request);
@@ -71,7 +79,7 @@ public class MobileWalletAdapterClient: JsonRpc20Client, IAdapterOperations, IMe
         return SendRequest<SignedResult>(request);
     }
 
-    private JsonRequest PrepareAuthRequest(Uri uriIdentity, Uri icon, string name, string cluster, string method)
+    private JsonRequest PrepareAuthRequest(Uri uriIdentity, Uri icon, string name, string cluster, string method, string chain = null)
     {
         if (uriIdentity != null && !uriIdentity.IsAbsoluteUri)
         {
@@ -93,7 +101,8 @@ public class MobileWalletAdapterClient: JsonRpc20Client, IAdapterOperations, IMe
                     Icon = icon,
                     Name = name
                 },
-                Cluster = cluster
+                Cluster = cluster,
+                Chain = chain
             },
             Id = NextMessageId()
         };

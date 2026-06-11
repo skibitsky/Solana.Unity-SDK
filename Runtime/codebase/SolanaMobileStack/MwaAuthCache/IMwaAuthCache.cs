@@ -39,7 +39,7 @@ namespace Solana.Unity.SDK
 
         /// <summary>
         /// Removes the stored token. Must be idempotent so calling it twice
-        /// (e.g. <c>Logout()</c> followed by <c>DisconnectWallet()</c>) does
+        /// (e.g. <c>Logout()</c> followed by <c>Deauthorize()</c>) does
         /// not throw.
         /// </summary>
         Task Clear();

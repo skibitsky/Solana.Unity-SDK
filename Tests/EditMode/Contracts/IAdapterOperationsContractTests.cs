@@ -125,6 +125,18 @@ namespace Solana.Unity.SDK.Tests.EditMode.Contracts
         }
 
         [Test]
+        public void Interface_Has_SignAndSendTransactions_WithExpectedSignature()
+        {
+            var method = GetMethod(nameof(IAdapterOperations.SignAndSendTransactions));
+
+            Assert.IsNotNull(method, "IAdapterOperations.SignAndSendTransactions must exist");
+            Assert.AreEqual(typeof(Task<SignAndSendResult>), method.ReturnType,
+                "SignAndSendTransactions must return Task<SignAndSendResult>");
+            Assert.IsTrue(HasParams(method, typeof(IEnumerable<byte[]>), typeof(SignAndSendTransactionsOptions)),
+                "SignAndSendTransactions params must be (IEnumerable<byte[]> transactions, SignAndSendTransactionsOptions options)");
+        }
+
+        [Test]
         public void Interface_Has_SignMessages_WithExpectedSignature()
         {
             var method = GetMethod(nameof(IAdapterOperations.SignMessages));
@@ -175,14 +187,15 @@ namespace Solana.Unity.SDK.Tests.EditMode.Contracts
         [Test]
         public void InterfaceMethodCount_MatchesExpectedSurface()
         {
-            // Deauthorize, GetCapabilities, SignTransactions, SignMessages.
+            // Authorize, Reauthorize, Deauthorize, GetCapabilities, SignTransactions,
+            // SignAndSendTransactions, SignMessages.
             // If this number changes, the contract tests above must be
             // updated to cover any new members.
             var methods = typeof(IAdapterOperations)
                 .GetMethods(BindingFlags.Instance | BindingFlags.Public);
 
-            Assert.AreEqual(6, methods.Length,
-                "IAdapterOperations must expose exactly 6 methods; update contract tests when this changes");
+            Assert.AreEqual(7, methods.Length,
+                "IAdapterOperations must expose exactly 7 methods; update contract tests when this changes");
         }
     }
 }

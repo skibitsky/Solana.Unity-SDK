@@ -261,5 +261,80 @@ namespace Solana.Unity.SDK.Tests.EditMode.MwaClient
             Assert.AreEqual(chain, request.Params.Chain,
                 "Params.Chain must match the supplied CAIP-2 chain string on reauthorize");
         }
+
+
+        // sign_and_send_transactions request shape
+        [Test]
+        public void SignAndSend_SendsCorrectMethod()
+        {
+            _ = _client.SignAndSendTransactions(new[] { new byte[] { 1, 2, 3 } });
+
+            var request = DecodeLastRequest();
+            Assert.AreEqual("sign_and_send_transactions", request.Method,
+                "Method must be 'sign_and_send_transactions'");
+        }
+
+        [Test]
+        public void SignAndSend_EncodesPayloads_AsBase64()
+        {
+            var payload = new byte[] { 1, 2, 3, 4 };
+
+            _ = _client.SignAndSendTransactions(new[] { payload });
+
+            var request = DecodeLastRequest();
+            Assert.IsNotNull(request.Params.Payloads);
+            Assert.AreEqual(1, request.Params.Payloads.Count);
+            Assert.AreEqual(Convert.ToBase64String(payload), request.Params.Payloads[0],
+                "payload must be base64-encoded");
+        }
+
+        [Test]
+        public void SignAndSend_OmitsOptions_WhenNull()
+        {
+            _ = _client.SignAndSendTransactions(new[] { new byte[] { 1 } });
+
+            var json = Encoding.UTF8.GetString(_sender.LastMessage);
+            StringAssert.DoesNotContain("\"options\"", json,
+                "the options object must be omitted when no options are supplied");
+        }
+
+        [Test]
+        public void SignAndSend_SerializesOptions_WithSnakeCaseKeys()
+        {
+            var options = new SignAndSendTransactionsOptions
+            {
+                MinContextSlot = 42,
+                Commitment = "confirmed",
+                SkipPreflight = true,
+                MaxRetries = 3,
+                WaitForCommitmentToSendNextTransaction = false
+            };
+
+            _ = _client.SignAndSendTransactions(new[] { new byte[] { 1 } }, options);
+
+            var json = Encoding.UTF8.GetString(_sender.LastMessage);
+            StringAssert.Contains("\"min_context_slot\":42", json);
+            StringAssert.Contains("\"commitment\":\"confirmed\"", json);
+            StringAssert.Contains("\"skip_preflight\":true", json);
+            StringAssert.Contains("\"max_retries\":3", json);
+            StringAssert.Contains("\"wait_for_commitment_to_send_next_transaction\":false", json);
+
+            var request = DecodeLastRequest();
+            Assert.AreEqual(42UL, request.Params.Options.MinContextSlot);
+            Assert.AreEqual("confirmed", request.Params.Options.Commitment);
+        }
+
+        [Test]
+        public void SignAndSendResult_Deserializes_SignaturesToBytes()
+        {
+            var sigBytes = new byte[] { 9, 8, 7 };
+            var json = "{\"signatures\":[\"" + Convert.ToBase64String(sigBytes) + "\"]}";
+
+            var result = JsonConvert.DeserializeObject<SignAndSendResult>(json);
+
+            Assert.IsNotNull(result.SignatureBytes);
+            Assert.AreEqual(1, result.SignatureBytes.Count);
+            CollectionAssert.AreEqual(sigBytes, result.SignatureBytes[0]);
+        }
     }
 }

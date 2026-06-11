@@ -206,8 +206,9 @@ namespace Solana.Unity.SDK
                     // declined): surface as-is rather than re-prompting with authorize.
                     if (reauthorize.Authorization != null)
                     {
-                        Debug.LogError($"[MWA] {label} failed: {result.Error?.Message}");
-                        throw new Exception(result.Error?.Message ?? $"[MWA] {label} failed");
+                        Debug.LogError($"[MWA] {label} failed ({result.Error?.Code}): {result.Error?.Message}");
+                        throw new MwaRpcException(result.Error?.Code ?? 0,
+                            result.Error?.Message ?? $"[MWA] {label} failed");
                     }
 
                     // Token expired/revoked — a fresh authorization is now necessary.
@@ -226,8 +227,9 @@ namespace Solana.Unity.SDK
                 var authResult = await scenario.StartAndExecute(actions);
                 if (!authResult.WasSuccessful)
                 {
-                    Debug.LogError($"[MWA] {label} failed: {authResult.Error?.Message}");
-                    throw new Exception(authResult.Error?.Message ?? $"[MWA] {label} failed");
+                    Debug.LogError($"[MWA] {label} failed ({authResult.Error?.Code}): {authResult.Error?.Message}");
+                    throw new MwaRpcException(authResult.Error?.Code ?? 0,
+                        authResult.Error?.Message ?? $"[MWA] {label} failed");
                 }
                 if (authorize.Authorization == null)
                     throw new Exception($"[MWA] {label}: authorization was not populated");
@@ -378,12 +380,48 @@ namespace Solana.Unity.SDK
                 .Select(transaction => Transaction.Deserialize(transaction)).ToArray();
         }
 
+        /// <summary>
+        /// Signs AND submits <paramref name="transactions"/> to the network via the wallet
+        /// (<c>sign_and_send_transactions</c>), returning the network signatures (raw bytes).
+        ///
+        /// Distinct from <see cref="_SignTransaction"/> / <see cref="_SignAllTransactions"/>,
+        /// which sign locally and leave submission to the SDK. This method is OPTIONAL per
+        /// the MWA 2.0 spec; if the wallet does not implement it, this throws
+        /// <see cref="NotSupportedException"/> (RPC -32601) — there is intentionally NO
+        /// fallback to <c>sign_transactions</c>.
+        /// </summary>
+        /// <exception cref="NotSupportedException">The wallet does not implement sign_and_send_transactions.</exception>
+        public async Task<byte[][]> SignAndSendTransactions(
+            Transaction[] transactions, SignAndSendTransactionsOptions options = null)
+        {
+            SignAndSendResult res = null;
+            try
+            {
+                await RunPrivileged(async client =>
+                {
+                    res = await client.SignAndSendTransactions(
+                        transactions.Select(t => t.Serialize()).ToList(), options);
+                }, "SignAndSendTransactions");
+            }
+            catch (MwaRpcException e) when (e.Code == MwaErrorCodes.MethodNotFound)
+            {
+                throw new NotSupportedException(
+                    "[MWA] This wallet does not implement sign_and_send_transactions (-32601). " +
+                    "Use the standard sign + submit path instead.", e);
+            }
+
+            if (res?.SignatureBytes == null)
+                throw new Exception("[MWA] SignAndSendTransactions: signatures were not populated");
+
+            return res.SignatureBytes.ToArray();
+        }
+
 
         /// <summary>
         /// Clears the in-memory token, the cached public key in PlayerPrefs,
         /// and the auth token stored in <see cref="IMwaAuthCache"/>. Does
         /// NOT call <c>deauthorize</c> on the wallet side. Use
-        /// <see cref="DisconnectWallet"/> when the wallet-side session also
+        /// <see cref="Deauthorize"/> when the wallet-side session also
         /// needs to be revoked.
         ///
         /// Stays synchronous to keep the <see cref="WalletBase"/> override
@@ -400,7 +438,7 @@ namespace Solana.Unity.SDK
             try
             {
                 // Custom IMwaAuthCache impls (Keystore, EncryptedSharedPreferences, etc.) can
-                // throw on backend errors. Swallow here so DisconnectWallet still fires
+                // throw on backend errors. Swallow here so Deauthorize still fires
                 // OnWalletDisconnected and the rest of the logout sequence completes.
                 _authCache.Clear().GetAwaiter().GetResult();
             }
@@ -419,7 +457,7 @@ namespace Solana.Unity.SDK
             }
         }
 
-        public async Task DisconnectWallet()
+        public async Task Deauthorize()
         {
             string authToken = _authToken;
             if (authToken.IsNullOrEmpty())
@@ -458,7 +496,7 @@ namespace Solana.Unity.SDK
             }
             else
             {
-                Debug.Log("[MWA] DisconnectWallet: no targetable wallet package " +
+                Debug.Log("[MWA] Deauthorize: no targetable wallet package " +
                           "(none cached or token already gone); skipping remote deauthorize, " +
                           "clearing local session only.");
             }

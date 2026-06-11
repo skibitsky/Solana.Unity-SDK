@@ -70,8 +70,43 @@ namespace Solana.Unity.SDK
             [RequiredMember]
             public List<string> Addresses { get; set; }
 
+            // sign_and_send_transactions network-submission options. Omitted when null.
+            [JsonProperty("options", NullValueHandling = NullValueHandling.Ignore)]
+            [RequiredMember]
+            public JsonRequestOptions Options { get; set; }
+
             [RequiredMember]
             public JsonRequestParams()
+            {
+            }
+        }
+
+        [Serializable]
+        [Preserve]
+        public class JsonRequestOptions
+        {
+            [JsonProperty("min_context_slot", NullValueHandling = NullValueHandling.Ignore)]
+            [RequiredMember]
+            public ulong? MinContextSlot { get; set; }
+
+            [JsonProperty("commitment", NullValueHandling = NullValueHandling.Ignore)]
+            [RequiredMember]
+            public string Commitment { get; set; }
+
+            [JsonProperty("skip_preflight", NullValueHandling = NullValueHandling.Ignore)]
+            [RequiredMember]
+            public bool? SkipPreflight { get; set; }
+
+            [JsonProperty("max_retries", NullValueHandling = NullValueHandling.Ignore)]
+            [RequiredMember]
+            public int? MaxRetries { get; set; }
+
+            [JsonProperty("wait_for_commitment_to_send_next_transaction", NullValueHandling = NullValueHandling.Ignore)]
+            [RequiredMember]
+            public bool? WaitForCommitmentToSendNextTransaction { get; set; }
+
+            [RequiredMember]
+            public JsonRequestOptions()
             {
             }
         }

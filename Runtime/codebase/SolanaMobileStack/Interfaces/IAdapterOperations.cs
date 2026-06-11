@@ -24,5 +24,7 @@ public interface IAdapterOperations
     [Preserve]
     public Task<SignedResult> SignTransactions(IEnumerable<byte[]> transactions);
     [Preserve]
+    public Task<SignAndSendResult> SignAndSendTransactions(IEnumerable<byte[]> transactions, SignAndSendTransactionsOptions options = null);
+    [Preserve]
     public Task<SignedResult> SignMessages(IEnumerable<byte[]> messages, IEnumerable<byte[]> addresses);
 }

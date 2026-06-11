@@ -73,6 +73,13 @@ public class MobileWalletAdapterClient: JsonRpc20Client, IAdapterOperations, IMe
         return SendRequest<SignedResult>(request);
     }
 
+    public Task<SignAndSendResult> SignAndSendTransactions(
+        IEnumerable<byte[]> transactions, SignAndSendTransactionsOptions options = null)
+    {
+        var request = PrepareSignAndSendTransactionsRequest(transactions, options);
+        return SendRequest<SignAndSendResult>(request);
+    }
+
     public Task<SignedResult> SignMessages(IEnumerable<byte[]> messages, IEnumerable<byte[]> addresses)
     {
         var request = PrepareSignMessagesRequest(messages, addresses);
@@ -151,6 +158,38 @@ public class MobileWalletAdapterClient: JsonRpc20Client, IAdapterOperations, IMe
         return request;
     }
     
+    private JsonRequest PrepareSignAndSendTransactionsRequest(
+        IEnumerable<byte[]> transactions, SignAndSendTransactionsOptions options)
+    {
+        var request = new JsonRequest
+        {
+            JsonRpc = JsonRpcVersion,
+            Method = "sign_and_send_transactions",
+            Params = new JsonRequest.JsonRequestParams
+            {
+                Payloads = transactions.Select(Convert.ToBase64String).ToList(),
+                Options = ToWireOptions(options)
+            },
+            Id = NextMessageId()
+        };
+        return request;
+    }
+
+    // null in → null out, so the whole `options` object is omitted from the request.
+    private static JsonRequest.JsonRequestOptions ToWireOptions(SignAndSendTransactionsOptions o)
+    {
+        if (o == null)
+            return null;
+        return new JsonRequest.JsonRequestOptions
+        {
+            MinContextSlot = o.MinContextSlot,
+            Commitment = o.Commitment,
+            SkipPreflight = o.SkipPreflight,
+            MaxRetries = o.MaxRetries,
+            WaitForCommitmentToSendNextTransaction = o.WaitForCommitmentToSendNextTransaction
+        };
+    }
+
     private JsonRequest PrepareSignMessagesRequest(IEnumerable<byte[]> messages, IEnumerable<byte[]> addresses)
     {
         var request = new JsonRequest

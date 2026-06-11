@@ -104,17 +104,34 @@ namespace Solana.Unity.SDK
             _internalWallet?.Logout();
         }
 
-        public async Task DisconnectWallet()
+        public async Task Deauthorize()
         {
             var mobileAdapter = _internalWallet as SolanaMobileWalletAdapter;
             if (mobileAdapter != null)
             {
-                await mobileAdapter.DisconnectWallet();
+                await mobileAdapter.Deauthorize();
                 return;
             }
             if (_internalWallet != null)
                 throw new NotImplementedException();
-            // No internal wallet configured - nothing to disconnect
+            // No internal wallet configured - nothing to deauthorize
+        }
+
+        /// <summary>
+        /// Signs AND submits transactions via the wallet (Android MWA only),
+        /// returning the network signatures. Throws
+        /// <see cref="NotSupportedException"/> if the connected wallet does not
+        /// implement sign_and_send_transactions; there is no fallback.
+        /// </summary>
+        public async Task<byte[][]> SignAndSendTransactions(
+            Transaction[] transactions, SignAndSendTransactionsOptions options = null)
+        {
+            var mobileAdapter = _internalWallet as SolanaMobileWalletAdapter;
+            if (mobileAdapter != null)
+                return await mobileAdapter.SignAndSendTransactions(transactions, options);
+            if (_internalWallet != null)
+                throw new NotImplementedException();
+            return null;
         }
 
         public async Task ReconnectWallet()

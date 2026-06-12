@@ -134,6 +134,34 @@ namespace Solana.Unity.SDK
             return null;
         }
 
+        /// <summary>
+        /// Clones the current authorization into a new auth_token (Android MWA only).
+        /// Throws <see cref="NotSupportedException"/> if the wallet does not implement it.
+        /// </summary>
+        public async Task<string> CloneAuthorization()
+        {
+            var mobileAdapter = _internalWallet as SolanaMobileWalletAdapter;
+            if (mobileAdapter != null)
+                return await mobileAdapter.CloneAuthorization();
+            if (_internalWallet != null)
+                throw new NotImplementedException();
+            return null;
+        }
+
+        /// <summary>
+        /// Logs in with Sign-In-With-Solana (Android MWA only), returning the account and
+        /// the SIWS result (native sign_in_result or a sign_messages fallback).
+        /// </summary>
+        public async Task<(Account account, SignInResult signInResult)> LoginWithSignIn(SignInPayload payload)
+        {
+            var mobileAdapter = _internalWallet as SolanaMobileWalletAdapter;
+            if (mobileAdapter != null)
+                return await mobileAdapter.LoginWithSignIn(payload);
+            if (_internalWallet != null)
+                throw new NotImplementedException();
+            return default;
+        }
+
         public async Task ReconnectWallet()
         {
             var mobileAdapter = _internalWallet as SolanaMobileWalletAdapter;

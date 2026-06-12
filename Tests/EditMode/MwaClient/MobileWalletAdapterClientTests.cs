@@ -336,5 +336,48 @@ namespace Solana.Unity.SDK.Tests.EditMode.MwaClient
             Assert.AreEqual(1, result.SignatureBytes.Count);
             CollectionAssert.AreEqual(sigBytes, result.SignatureBytes[0]);
         }
+
+
+        // clone_authorization request shape
+        [Test]
+        public void CloneAuthorization_SendsCorrectMethod_WithEmptyParams()
+        {
+            _ = _client.CloneAuthorization();
+
+            var request = DecodeLastRequest();
+            Assert.AreEqual("clone_authorization", request.Method,
+                "Method must be 'clone_authorization'");
+            Assert.IsNull(request.Params.AuthToken, "clone_authorization params must be empty");
+            Assert.IsNull(request.Params.Payloads, "clone_authorization params must be empty");
+        }
+
+
+        // sign_in_payload on authorize (SIWS)
+        [Test]
+        public void Authorize_IncludesSignInPayload_WhenProvided()
+        {
+            var payload = new SignInPayload { Domain = "example.com", Statement = "Sign in", Nonce = "abc123" };
+
+            _ = _client.Authorize(new Uri("https://example.com"), null, "TestApp", "mainnet-beta", "solana:mainnet", payload);
+
+            var json = Encoding.UTF8.GetString(_sender.LastMessage);
+            StringAssert.Contains("\"sign_in_payload\"", json);
+            StringAssert.Contains("\"domain\":\"example.com\"", json);
+            StringAssert.Contains("\"nonce\":\"abc123\"", json);
+
+            var request = DecodeLastRequest();
+            Assert.IsNotNull(request.Params.SignInPayload);
+            Assert.AreEqual("example.com", request.Params.SignInPayload.Domain);
+        }
+
+        [Test]
+        public void Authorize_OmitsSignInPayload_WhenNull()
+        {
+            _ = _client.Authorize(new Uri("https://example.com"), null, "TestApp", "mainnet-beta");
+
+            var json = Encoding.UTF8.GetString(_sender.LastMessage);
+            StringAssert.DoesNotContain("sign_in_payload", json,
+                "sign_in_payload must be omitted when no SIWS payload is supplied");
+        }
     }
 }

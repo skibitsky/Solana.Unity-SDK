@@ -329,7 +329,7 @@ namespace Solana.Unity.SDK
             {
                 throw new Exception("[MWA] Login: authorization was not populated");
             }
-            
+
             var publicKey = new PublicKey(authorizationOperation.Authorization.PublicKey);
             if (string.IsNullOrEmpty(authorizationOperation.Authorization.AuthToken))
                 return new Account(string.Empty, publicKey);
@@ -414,6 +414,151 @@ namespace Solana.Unity.SDK
                 throw new Exception("[MWA] SignAndSendTransactions: signatures were not populated");
 
             return res.SignatureBytes.ToArray();
+        }
+
+        /// <summary>
+        /// Clones the current authorization into a new <c>auth_token</c> that can be
+        /// transferred to another instance of the dapp (<c>clone_authorization</c>).
+        /// Optional in MWA 2.0 (gated on <c>solana:cloneAuthorization</c>); requires an
+        /// authorized session, which <see cref="RunPrivileged"/> establishes first.
+        /// </summary>
+        /// <exception cref="NotSupportedException">The wallet does not implement clone_authorization (-32601).</exception>
+        public async Task<string> CloneAuthorization()
+        {
+            CloneAuthorizationResult res = null;
+            try
+            {
+                await RunPrivileged(async client =>
+                {
+                    res = await client.CloneAuthorization();
+                }, "CloneAuthorization");
+            }
+            catch (MwaRpcException e) when (e.Code == MwaErrorCodes.MethodNotFound)
+            {
+                throw new NotSupportedException(
+                    "[MWA] This wallet does not support clone_authorization (-32601).", e);
+            }
+
+            if (string.IsNullOrEmpty(res?.AuthToken))
+                throw new Exception("[MWA] CloneAuthorization: no token returned");
+            return res.AuthToken;
+        }
+
+        /// <summary>
+        /// Logs in with Sign-In-With-Solana: authorizes carrying a <c>sign_in_payload</c>
+        /// and returns the account plus the SIWS result. If the wallet returns a native
+        /// <c>sign_in_result</c> it is used directly; otherwise the SIWS message is built
+        /// and signed via <c>sign_messages</c> as a fallback. The result address is
+        /// normalized to base58 in both paths.
+        /// </summary>
+        public async Task<(Account account, SignInResult signInResult)> LoginWithSignIn(SignInPayload payload)
+        {
+            var cluster = RPCNameMap[(int)RpcCluster];
+            var chain = ChainNameMap[(int)RpcCluster];
+
+            AuthorizationResult authorization = null;
+            using (var scenario = await CreateTargetedScenario())
+            {
+                var result = await scenario.StartAndExecute(new List<Action<IAdapterOperations>>
+                {
+                    async client =>
+                    {
+                        authorization = await client.Authorize(
+                            new Uri(_walletOptions.identityUri),
+                            new Uri(_walletOptions.iconUri, UriKind.Relative),
+                            _walletOptions.name, cluster, chain, payload);
+                    }
+                });
+                if (!result.WasSuccessful)
+                    throw new Exception(result.Error?.Message ?? "[MWA] LoginWithSignIn: authorize failed");
+            }
+            if (authorization == null)
+                throw new Exception("[MWA] LoginWithSignIn: authorization was not populated");
+
+            var publicKey = new PublicKey(authorization.PublicKey);
+            var account = new Account(string.Empty, publicKey);
+            Account = account;
+
+            _authToken = authorization.AuthToken;
+            if (_walletOptions.keepConnectionAlive && !string.IsNullOrEmpty(_authToken))
+            {
+                PlayerPrefs.SetString(PrefKeyPublicKey, publicKey.ToString());
+                PlayerPrefs.Save();
+                await _authCache.Set(_authToken);
+                var chosen = MwaNativeChooser.ConsumeChosenPackage();
+                if (!string.IsNullOrEmpty(chosen))
+                    await TryCacheWalletPackage(chosen);
+            }
+
+            // Native SIWS: the wallet already returned a sign_in_result. Normalize the
+            // address to base58 (some wallets, e.g. Seed Vault, return it base64-encoded)
+            // so the native and fallback paths report a consistent representation.
+            if (authorization.SignInResult != null)
+            {
+                authorization.SignInResult.Address = publicKey.Key;
+                return (account, authorization.SignInResult);
+            }
+
+            // Fallback: construct the SIWS message and sign it via sign_messages.
+            var siwsMessage = BuildSiwsMessage(payload, publicKey.Key);
+            var siwsBytes = System.Text.Encoding.UTF8.GetBytes(siwsMessage);
+            SignedResult signed = null;
+            await RunPrivileged(async client =>
+            {
+                signed = await client.SignMessages(
+                    messages: new List<byte[]> { siwsBytes },
+                    addresses: new List<byte[]> { publicKey.KeyBytes });
+            }, "LoginWithSignIn-fallback");
+
+            var signedBytes = signed?.SignedPayloadsBytes is { Count: > 0 } ? signed.SignedPayloadsBytes[0] : null;
+            if (signedBytes == null || signedBytes.Length < 64)
+                throw new Exception("[MWA] LoginWithSignIn: SIWS fallback signing failed");
+
+            // The ed25519 signature is the trailing 64 bytes — robust whether the wallet
+            // returns the bare signature or a `message || signature` envelope.
+            var sig = new byte[64];
+            Array.Copy(signedBytes, signedBytes.Length - 64, sig, 0, 64);
+
+            return (account, new SignInResult
+            {
+                Address = publicKey.Key, // base58, matching the native sign_in_result path
+                SignedMessage = Convert.ToBase64String(siwsBytes),
+                Signature = Convert.ToBase64String(sig),
+                SignatureType = "ed25519"
+            });
+        }
+
+        // Builds a Sign-In-With-Solana message from the payload for the fallback path
+        // (wallets without native SIWS). Format follows the SIWS / EIP-4361 layout.
+        private static string BuildSiwsMessage(SignInPayload p, string addressBase58)
+        {
+            var address = !string.IsNullOrEmpty(p.Address) ? p.Address : addressBase58;
+            var sb = new System.Text.StringBuilder();
+            sb.Append($"{p.Domain} wants you to sign in with your Solana account:\n");
+            sb.Append(address);
+            if (!string.IsNullOrEmpty(p.Statement))
+                sb.Append($"\n\n{p.Statement}");
+
+            var fields = new List<string>();
+            if (!string.IsNullOrEmpty(p.Uri)) fields.Add($"URI: {p.Uri}");
+            if (!string.IsNullOrEmpty(p.Version)) fields.Add($"Version: {p.Version}");
+            if (!string.IsNullOrEmpty(p.ChainId)) fields.Add($"Chain ID: {p.ChainId}");
+            if (!string.IsNullOrEmpty(p.Nonce)) fields.Add($"Nonce: {p.Nonce}");
+            if (!string.IsNullOrEmpty(p.IssuedAt)) fields.Add($"Issued At: {p.IssuedAt}");
+            if (!string.IsNullOrEmpty(p.ExpirationTime)) fields.Add($"Expiration Time: {p.ExpirationTime}");
+            if (!string.IsNullOrEmpty(p.NotBefore)) fields.Add($"Not Before: {p.NotBefore}");
+            if (!string.IsNullOrEmpty(p.RequestId)) fields.Add($"Request ID: {p.RequestId}");
+            if (fields.Count > 0)
+                sb.Append("\n\n").Append(string.Join("\n", fields));
+
+            if (p.Resources != null && p.Resources.Length > 0)
+            {
+                sb.Append("\nResources:");
+                foreach (var r in p.Resources)
+                    sb.Append($"\n- {r}");
+            }
+
+            return sb.ToString();
         }
 
 

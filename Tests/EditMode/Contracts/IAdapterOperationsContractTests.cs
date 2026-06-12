@@ -46,8 +46,8 @@ namespace Solana.Unity.SDK.Tests.EditMode.Contracts
             Assert.IsNotNull(method, "IAdapterOperations.Authorize must exist");
             Assert.AreEqual(typeof(Task<AuthorizationResult>), method.ReturnType,
                 "Authorize must return Task<AuthorizationResult>");
-            Assert.IsTrue(HasParams(method, typeof(Uri), typeof(Uri), typeof(string), typeof(string), typeof(string)),
-                "Authorize params must be (Uri identityUri, Uri iconUri, string identityName, string rpcCluster, string chain)");
+            Assert.IsTrue(HasParams(method, typeof(Uri), typeof(Uri), typeof(string), typeof(string), typeof(string), typeof(SignInPayload)),
+                "Authorize params must be (Uri identityUri, Uri iconUri, string identityName, string rpcCluster, string chain, SignInPayload signInPayload)");
         }
 
         
@@ -137,6 +137,18 @@ namespace Solana.Unity.SDK.Tests.EditMode.Contracts
         }
 
         [Test]
+        public void Interface_Has_CloneAuthorization_WithNoParameters()
+        {
+            var method = GetMethod(nameof(IAdapterOperations.CloneAuthorization));
+
+            Assert.IsNotNull(method, "IAdapterOperations.CloneAuthorization must exist");
+            Assert.AreEqual(typeof(Task<CloneAuthorizationResult>), method.ReturnType,
+                "CloneAuthorization must return Task<CloneAuthorizationResult>");
+            Assert.AreEqual(0, method.GetParameters().Length,
+                "CloneAuthorization must take no parameters (empty MWA params)");
+        }
+
+        [Test]
         public void Interface_Has_SignMessages_WithExpectedSignature()
         {
             var method = GetMethod(nameof(IAdapterOperations.SignMessages));
@@ -188,14 +200,14 @@ namespace Solana.Unity.SDK.Tests.EditMode.Contracts
         public void InterfaceMethodCount_MatchesExpectedSurface()
         {
             // Authorize, Reauthorize, Deauthorize, GetCapabilities, SignTransactions,
-            // SignAndSendTransactions, SignMessages.
+            // SignAndSendTransactions, CloneAuthorization, SignMessages.
             // If this number changes, the contract tests above must be
             // updated to cover any new members.
             var methods = typeof(IAdapterOperations)
                 .GetMethods(BindingFlags.Instance | BindingFlags.Public);
 
-            Assert.AreEqual(7, methods.Length,
-                "IAdapterOperations must expose exactly 7 methods; update contract tests when this changes");
+            Assert.AreEqual(8, methods.Length,
+                "IAdapterOperations must expose exactly 8 methods; update contract tests when this changes");
         }
     }
 }

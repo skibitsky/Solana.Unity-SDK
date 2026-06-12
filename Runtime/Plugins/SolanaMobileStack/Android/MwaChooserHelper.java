@@ -19,6 +19,13 @@ public final class MwaChooserHelper {
 
     private static final String EXTRA_NONCE = "chooser_nonce";
 
+    // Distinct from the targeted association requestCode (0). The result itself is
+    // unused (the chosen package arrives via the EXTRA_CHOSEN_COMPONENT broadcast);
+    // launching the chooser *for result* is what makes the system preserve our app
+    // as the caller of the chosen wallet (startActivityAsCaller), so the wallet binds
+    // the authorization to us and the token stays reauthorizable.
+    private static final int CHOOSER_REQUEST_CODE = 0x4D7741; // "MwA"
+
     private static volatile String sChosenPackage = null;
     private static volatile String sChooserNonce = null;
     private static BroadcastReceiver sReceiver = null;
@@ -49,7 +56,10 @@ public final class MwaChooserHelper {
         PendingIntent pendingIntent = PendingIntent.getBroadcast(activity, 0, broadcast, flags);
 
         Intent chooser = Intent.createChooser(target, title, pendingIntent.getIntentSender());
-        activity.startActivity(chooser);
+        // startActivityForResult (not startActivity): on modern Android the chooser then
+        // launches the chosen wallet via startActivityAsCaller, preserving THIS app as the
+        // caller — matching the targeted path so the issued auth_token is reauthorizable.
+        activity.startActivityForResult(chooser, CHOOSER_REQUEST_CODE);
     }
 
     private static synchronized void registerReceiver(Context context) {

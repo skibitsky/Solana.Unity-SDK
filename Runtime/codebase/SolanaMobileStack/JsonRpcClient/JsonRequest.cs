@@ -75,6 +75,11 @@ namespace Solana.Unity.SDK
             [RequiredMember]
             public JsonRequestOptions Options { get; set; }
 
+            // Sign-In-With-Solana input fields on authorize. Omitted when null.
+            [JsonProperty("sign_in_payload", NullValueHandling = NullValueHandling.Ignore)]
+            [RequiredMember]
+            public SignInPayload SignInPayload { get; set; }
+
             [RequiredMember]
             public JsonRequestParams()
             {

@@ -21,7 +21,7 @@ public class MobileWalletAdapterClient: JsonRpc20Client, IAdapterOperations, IMe
     }
     
     [Preserve]
-    public Task<AuthorizationResult> Authorize(Uri identityUri, Uri iconUri, string identityName, string cluster, string chain = null)
+    public Task<AuthorizationResult> Authorize(Uri identityUri, Uri iconUri, string identityName, string cluster, string chain = null, SignInPayload signInPayload = null)
     {
         var request = PrepareAuthRequest(
             identityUri,
@@ -31,7 +31,24 @@ public class MobileWalletAdapterClient: JsonRpc20Client, IAdapterOperations, IMe
             "authorize",
             chain);
 
+        if (signInPayload != null)
+            request.Params.SignInPayload = signInPayload;
+
         return SendRequest<AuthorizationResult>(request);
+    }
+
+    public Task<CloneAuthorizationResult> CloneAuthorization()
+    {
+        // clone_authorization takes empty params; the current session must already be
+        // authorized (RunPrivileged ensures this before invoking it).
+        var request = new JsonRequest
+        {
+            JsonRpc = JsonRpcVersion,
+            Method = "clone_authorization",
+            Params = new JsonRequest.JsonRequestParams(),
+            Id = NextMessageId()
+        };
+        return SendRequest<CloneAuthorizationResult>(request);
     }
 
     public Task<AuthorizationResult> Reauthorize(Uri identityUri, Uri iconUri, string identityName, string authToken, string cluster = null, string chain = null)

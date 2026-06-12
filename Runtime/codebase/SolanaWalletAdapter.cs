@@ -104,6 +104,9 @@ namespace Solana.Unity.SDK
             _internalWallet?.Logout();
         }
 
+        [Obsolete("Renamed to Deauthorize(). This alias forwards to it and may be removed in a future release.")]
+        public Task DisconnectWallet() => Deauthorize();
+
         public async Task Deauthorize()
         {
             var mobileAdapter = _internalWallet as SolanaMobileWalletAdapter;
@@ -118,12 +121,11 @@ namespace Solana.Unity.SDK
         }
 
         /// <summary>
-        /// Signs AND submits transactions via the wallet (Android MWA only),
-        /// returning the network signatures. Throws
-        /// <see cref="NotSupportedException"/> if the connected wallet does not
-        /// implement sign_and_send_transactions; there is no fallback.
+        /// Signs AND submits transactions via the wallet (Android MWA only), returning a
+        /// typed <see cref="SignAndSendTxResult"/> (Success / UserDeclined / NotSubmitted /
+        /// NotSupported / …). No fallback to local signing.
         /// </summary>
-        public async Task<byte[][]> SignAndSendTransactions(
+        public async Task<SignAndSendTxResult> SignAndSendTransactions(
             Transaction[] transactions, SignAndSendTransactionsOptions options = null)
         {
             var mobileAdapter = _internalWallet as SolanaMobileWalletAdapter;

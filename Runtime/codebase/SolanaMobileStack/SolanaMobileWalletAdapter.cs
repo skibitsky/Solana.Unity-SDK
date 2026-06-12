@@ -1,7 +1,9 @@
 using System;
 using System.Linq;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
+using Newtonsoft.Json.Linq;
 using Solana.Unity.Rpc.Models;
 using Solana.Unity.SDK;
 using Solana.Unity.Wallet;
@@ -180,6 +182,27 @@ namespace Solana.Unity.SDK
         /// bare sign knocks Phantom out of its authorized state and forces the
         /// following reauthorize to prompt.
         /// </remarks>
+        // Process-wide single-flight gate: only one MWA operation may run at a time, since
+        // each launches the wallet UI. Concurrent calls fail fast with
+        // OperationInFlightException rather than racing two associations.
+        private static readonly SemaphoreSlim OpGate = new SemaphoreSlim(1, 1);
+
+        private static async Task<T> RunExclusive<T>(string op, Func<Task<T>> body)
+        {
+            if (!await OpGate.WaitAsync(0))
+                throw new OperationInFlightException(op);
+            try { return await body(); }
+            finally { OpGate.Release(); }
+        }
+
+        private static async Task RunExclusive(string op, Func<Task> body)
+        {
+            if (!await OpGate.WaitAsync(0))
+                throw new OperationInFlightException(op);
+            try { await body(); }
+            finally { OpGate.Release(); }
+        }
+
         private async Task RunPrivileged(Action<IAdapterOperations> privilegedAction, string label)
         {
             if (_authToken.IsNullOrEmpty() && _walletOptions.keepConnectionAlive)
@@ -208,7 +231,7 @@ namespace Solana.Unity.SDK
                     {
                         Debug.LogError($"[MWA] {label} failed ({result.Error?.Code}): {result.Error?.Message}");
                         throw new MwaRpcException(result.Error?.Code ?? 0,
-                            result.Error?.Message ?? $"[MWA] {label} failed");
+                            result.Error?.Message ?? $"[MWA] {label} failed", result.Error?.Data);
                     }
 
                     // Token expired/revoked — a fresh authorization is now necessary.
@@ -229,7 +252,7 @@ namespace Solana.Unity.SDK
                 {
                     Debug.LogError($"[MWA] {label} failed ({authResult.Error?.Code}): {authResult.Error?.Message}");
                     throw new MwaRpcException(authResult.Error?.Code ?? 0,
-                        authResult.Error?.Message ?? $"[MWA] {label} failed");
+                        authResult.Error?.Message ?? $"[MWA] {label} failed", authResult.Error?.Data);
                 }
                 if (authorize.Authorization == null)
                     throw new Exception($"[MWA] {label}: authorization was not populated");
@@ -273,6 +296,8 @@ namespace Solana.Unity.SDK
 
         protected override async Task<Account> _Login(string password = null)
         {
+            if (!await OpGate.WaitAsync(0))
+                throw new OperationInFlightException("Login");
             _loginInProgress = true;
             try
             {
@@ -281,6 +306,7 @@ namespace Solana.Unity.SDK
             finally
             {
                 _loginInProgress = false;
+                OpGate.Release();
             }
         }
 
@@ -364,7 +390,10 @@ namespace Solana.Unity.SDK
             return result[0];
         }
 
-        protected override async Task<Transaction[]> _SignAllTransactions(Transaction[] transactions)
+        protected override Task<Transaction[]> _SignAllTransactions(Transaction[] transactions)
+            => RunExclusive("SignAllTransactions", () => _SignAllTransactionsImpl(transactions));
+
+        private async Task<Transaction[]> _SignAllTransactionsImpl(Transaction[] transactions)
         {
             SignedResult res = null;
             await RunPrivileged(async client =>
@@ -382,17 +411,20 @@ namespace Solana.Unity.SDK
 
         /// <summary>
         /// Signs AND submits <paramref name="transactions"/> to the network via the wallet
-        /// (<c>sign_and_send_transactions</c>), returning the network signatures (raw bytes).
+        /// (<c>sign_and_send_transactions</c>). Distinct from <see cref="_SignTransaction"/> /
+        /// <see cref="_SignAllTransactions"/>, which sign locally and leave submission to the
+        /// SDK. There is intentionally NO fallback to <c>sign_transactions</c>.
         ///
-        /// Distinct from <see cref="_SignTransaction"/> / <see cref="_SignAllTransactions"/>,
-        /// which sign locally and leave submission to the SDK. This method is OPTIONAL per
-        /// the MWA 2.0 spec; if the wallet does not implement it, this throws
-        /// <see cref="NotSupportedException"/> (RPC -32601) — there is intentionally NO
-        /// fallback to <c>sign_transactions</c>.
+        /// Returns a typed <see cref="SignAndSendTxResult"/> rather than throwing, because the
+        /// outcomes here (user declined, partial submit, invalid payloads, not supported) are
+        /// expected and carry data — pattern-match on the result case.
         /// </summary>
-        /// <exception cref="NotSupportedException">The wallet does not implement sign_and_send_transactions.</exception>
-        public async Task<byte[][]> SignAndSendTransactions(
+        public Task<SignAndSendTxResult> SignAndSendTransactions(
             Transaction[] transactions, SignAndSendTransactionsOptions options = null)
+            => RunExclusive("SignAndSendTransactions", () => SignAndSendTransactionsImpl(transactions, options));
+
+        private async Task<SignAndSendTxResult> SignAndSendTransactionsImpl(
+            Transaction[] transactions, SignAndSendTransactionsOptions options)
         {
             SignAndSendResult res = null;
             try
@@ -403,17 +435,61 @@ namespace Solana.Unity.SDK
                         transactions.Select(t => t.Serialize()).ToList(), options);
                 }, "SignAndSendTransactions");
             }
-            catch (MwaRpcException e) when (e.Code == MwaErrorCodes.MethodNotFound)
+            catch (MwaRpcException e)
             {
-                throw new NotSupportedException(
-                    "[MWA] This wallet does not implement sign_and_send_transactions (-32601). " +
-                    "Use the standard sign + submit path instead.", e);
+                return MapSignAndSendError(e);
             }
 
             if (res?.SignatureBytes == null)
-                throw new Exception("[MWA] SignAndSendTransactions: signatures were not populated");
+                return new SignAndSendTxResult.Failed
+                {
+                    Code = 0,
+                    Message = "[MWA] SignAndSendTransactions: signatures were not populated"
+                };
 
-            return res.SignatureBytes.ToArray();
+            return new SignAndSendTxResult.Success { Signatures = res.SignatureBytes.ToArray() };
+        }
+
+        // Maps a sign_and_send RPC error to its typed result case (verified spec codes).
+        private static SignAndSendTxResult MapSignAndSendError(MwaRpcException e)
+        {
+            switch (e.Code)
+            {
+                case MwaErrorCodes.NotSigned:
+                    return new SignAndSendTxResult.UserDeclined();
+                case MwaErrorCodes.MethodNotFound:
+                    return new SignAndSendTxResult.NotSupported();
+                case MwaErrorCodes.AuthorizationFailed:
+                    return new SignAndSendTxResult.Unauthorized();
+                case MwaErrorCodes.TooManyPayloads:
+                    return new SignAndSendTxResult.TooManyPayloads();
+                case MwaErrorCodes.NotSubmitted:
+                    return new SignAndSendTxResult.NotSubmitted { PartialSignatures = ParseDataSignatures(e.Data) };
+                case MwaErrorCodes.InvalidPayloads:
+                    return new SignAndSendTxResult.InvalidPayloads { Valid = ParseDataValid(e.Data) };
+                default:
+                    return new SignAndSendTxResult.Failed { Code = e.Code, Message = e.Message };
+            }
+        }
+
+        // -4 NOT_SUBMITTED: data.signatures[] — base64 string if submitted, null if not.
+        private static byte[][] ParseDataSignatures(JToken data)
+        {
+            if (data?["signatures"] is not JArray arr) return null;
+            var result = new byte[arr.Count][];
+            for (var i = 0; i < arr.Count; i++)
+            {
+                var s = arr[i]?.Type == JTokenType.String ? arr[i].Value<string>() : null;
+                result[i] = string.IsNullOrEmpty(s) ? null : Convert.FromBase64String(s);
+            }
+            return result;
+        }
+
+        // -2 INVALID_PAYLOADS: data.valid[] — per-payload boolean.
+        private static bool[] ParseDataValid(JToken data)
+        {
+            if (data?["valid"] is not JArray arr) return null;
+            return arr.Select(t => t.Type == JTokenType.Boolean && t.Value<bool>()).ToArray();
         }
 
         /// <summary>
@@ -423,7 +499,10 @@ namespace Solana.Unity.SDK
         /// authorized session, which <see cref="RunPrivileged"/> establishes first.
         /// </summary>
         /// <exception cref="NotSupportedException">The wallet does not implement clone_authorization (-32601).</exception>
-        public async Task<string> CloneAuthorization()
+        public Task<string> CloneAuthorization()
+            => RunExclusive("CloneAuthorization", CloneAuthorizationImpl);
+
+        private async Task<string> CloneAuthorizationImpl()
         {
             CloneAuthorizationResult res = null;
             try
@@ -451,7 +530,10 @@ namespace Solana.Unity.SDK
         /// and signed via <c>sign_messages</c> as a fallback. The result address is
         /// normalized to base58 in both paths.
         /// </summary>
-        public async Task<(Account account, SignInResult signInResult)> LoginWithSignIn(SignInPayload payload)
+        public Task<(Account account, SignInResult signInResult)> LoginWithSignIn(SignInPayload payload)
+            => RunExclusive("LoginWithSignIn", () => LoginWithSignInImpl(payload));
+
+        private async Task<(Account account, SignInResult signInResult)> LoginWithSignInImpl(SignInPayload payload)
         {
             var cluster = RPCNameMap[(int)RpcCluster];
             var chain = ChainNameMap[(int)RpcCluster];
@@ -602,7 +684,12 @@ namespace Solana.Unity.SDK
             }
         }
 
-        public async Task Deauthorize()
+        [Obsolete("Renamed to Deauthorize(). This alias forwards to it and may be removed in a future release.")]
+        public Task DisconnectWallet() => Deauthorize();
+
+        public Task Deauthorize() => RunExclusive("Deauthorize", DeauthorizeImpl);
+
+        private async Task DeauthorizeImpl()
         {
             string authToken = _authToken;
             if (authToken.IsNullOrEmpty())
@@ -702,7 +789,10 @@ namespace Solana.Unity.SDK
             }
         }
 
-        public async Task<CapabilitiesResult> GetCapabilities()
+        public Task<CapabilitiesResult> GetCapabilities()
+            => RunExclusive("GetCapabilities", GetCapabilitiesImpl);
+
+        private async Task<CapabilitiesResult> GetCapabilitiesImpl()
         {
             CapabilitiesResult capabilities = null;
             using var localAssociationScenario = await CreateTargetedScenario();
@@ -727,7 +817,10 @@ namespace Solana.Unity.SDK
             return capabilities;
         }
 
-        public override async Task<byte[]> SignMessage(byte[] message)
+        public override Task<byte[]> SignMessage(byte[] message)
+            => RunExclusive("SignMessage", () => SignMessageImpl(message));
+
+        private async Task<byte[]> SignMessageImpl(byte[] message)
         {
             string cachedPk = Account?.PublicKey?.ToString()
                 ?? PlayerPrefs.GetString(PrefKeyPublicKey, null);

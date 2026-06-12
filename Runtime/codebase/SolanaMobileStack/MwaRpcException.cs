@@ -1,4 +1,5 @@
 using System;
+using Newtonsoft.Json.Linq;
 using UnityEngine.Scripting;
 
 // ReSharper disable once CheckNamespace
@@ -17,10 +18,26 @@ namespace Solana.Unity.SDK
         /// <summary>The JSON-RPC / MWA error code (see <see cref="MwaErrorCodes"/>).</summary>
         public long Code { get; }
 
-        public MwaRpcException(long code, string message) : base(message)
+        /// <summary>Optional structured error payload (e.g. -4's partial `signatures`).</summary>
+        public JToken Data { get; }
+
+        public MwaRpcException(long code, string message, JToken data = null) : base(message)
         {
             Code = code;
+            Data = data;
         }
+    }
+
+    /// <summary>
+    /// Thrown when an MWA operation is started while another is already in flight. Only one
+    /// wallet interaction can run at a time (it launches the wallet UI), so concurrent calls
+    /// fail fast rather than racing two associations.
+    /// </summary>
+    [Preserve]
+    public class OperationInFlightException : InvalidOperationException
+    {
+        public OperationInFlightException(string operation)
+            : base($"[MWA] An MWA operation is already in progress; '{operation}' cannot start.") { }
     }
 
     /// <summary>

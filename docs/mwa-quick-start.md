@@ -55,6 +55,10 @@ On first connect the OS shows its wallet chooser and the wallet asks the user to
 After that, `Login` silently reconnects from the cached auth token — no wallet prompt — as
 long as `keepConnectionAlive` is enabled (the default).
 
+Because returning users reconnect silently, a landing screen should show **Continue** +
+**Logout** for them instead of a bare **Connect**. Check before any adapter exists with
+`MwaSession.HasCachedSession()` — see [Best Practices](mwa-best-practices.md).
+
 ## Use MWA-specific methods
 
 The MWA-only methods (`Deauthorize`, `SignAndSendTransactions`, `GetCapabilities`,
@@ -72,4 +76,5 @@ await adapter.Deauthorize(); // revoke wallet-side + clear local state
 ## Next steps
 
 - [Method Reference](mwa-method-reference.md) — the full MWA API
+- [Best Practices](mwa-best-practices.md) — landing-screen flow & gotchas
 - [Cache Guide](mwa-cache-guide.md) — customize auth-token storage

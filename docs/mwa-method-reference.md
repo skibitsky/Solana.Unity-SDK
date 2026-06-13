@@ -203,6 +203,25 @@ Queries the wallet's supported features and limits. `CapabilitiesResult`:
 
 ---
 
+## Session state (before login)
+
+`MwaSession` is a static helper for the cached session, callable at app start **before any
+adapter exists** — use it to decide the landing-screen UI (see
+[Best Practices](mwa-best-practices.md)).
+
+```csharp
+Task<bool>   MwaSession.HasCachedSession(IMwaAuthCache authCache = null)
+string       MwaSession.CachedAccountAddress()                  // base58, or null
+Task         MwaSession.ClearCachedSession(IMwaAuthCache = null, IMwaWalletSelectionCache = null)
+```
+
+- `HasCachedSession` → true when the next `Login()` will restore silently (cached account
+  **and** token present). Pass the same `IMwaAuthCache` you configured (defaults to
+  `PlayerPrefsAuthCache`).
+- `CachedAccountAddress` → the remembered address for a "Continue as …" label.
+- `ClearCachedSession` → local logout (account + token + remembered wallet), no wallet-side
+  revoke (same semantics as `Logout()`).
+
 ## Error handling
 
 Wallet RPC errors surface as `MwaRpcException` (carrying the numeric `Code`; see

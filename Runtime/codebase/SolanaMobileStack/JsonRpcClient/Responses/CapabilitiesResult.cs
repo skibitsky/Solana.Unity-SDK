@@ -12,9 +12,11 @@ public class CapabilitiesResult
     // Mandatory — always available, deliberately NOT advertised in Features:
     public const string FeatureSignMessages = "solana:signMessages";
     public const string FeatureSignAndSendTransaction = "solana:signAndSendTransaction";
+    
     // Optional — present in Features[] only when the wallet supports them:
     public const string FeatureSignInWithSolana = "solana:signInWithSolana";
     public const string FeatureCloneAuthorization = "solana:cloneAuthorization";
+    
     // Deprecated in 2.0, but some wallets still advertise it:
     public const string FeatureSignTransactions = "solana:signTransactions";
 
@@ -78,8 +80,6 @@ public class CapabilitiesResult
 /// versions like <c>0</c>, which a plain <c>string[]</c> binding would not
 /// reliably accept across Newtonsoft versions.
 /// </summary>
-// Non-generic JsonConverter (rather than JsonConverter<string[]>) to avoid
-// generic AOT/IL2CPP pitfalls on Unity's Android backend.
 [Preserve]
 internal sealed class MixedStringArrayConverter : JsonConverter
 {

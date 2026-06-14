@@ -21,8 +21,6 @@ namespace Solana.Unity.SDK
             [RequiredMember]
             public string Message { get; set; }
 
-            // Optional structured error payload (e.g. sign_and_send's -4 NOT_SUBMITTED
-            // partial `signatures`, or -2 INVALID_PAYLOADS `valid` array).
             [JsonProperty("data")]
             [RequiredMember]
             public JToken Data { get; set; }

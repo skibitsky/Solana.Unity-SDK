@@ -39,8 +39,6 @@ public class MobileWalletAdapterClient: JsonRpc20Client, IAdapterOperations, IMe
 
     public Task<CloneAuthorizationResult> CloneAuthorization()
     {
-        // clone_authorization takes empty params; the current session must already be
-        // authorized (RunPrivileged ensures this before invoking it).
         var request = new JsonRequest
         {
             JsonRpc = JsonRpcVersion,
@@ -53,12 +51,6 @@ public class MobileWalletAdapterClient: JsonRpc20Client, IAdapterOperations, IMe
 
     public Task<AuthorizationResult> Reauthorize(Uri identityUri, Uri iconUri, string identityName, string authToken, string cluster = null, string chain = null)
     {
-        // MWA 2.0 deprecated the standalone `reauthorize` method in favour of `authorize`
-        // carrying an `auth_token`. The `chain` MUST be re-sent here: when it is absent the
-        // wallet (e.g. Seeker Seed Vault) defaults the re-established session to
-        // solana:mainnet, producing a "Network mismatch" at sign time even though the
-        // original authorize was devnet. When the chain matches the token's binding the
-        // wallet silently reuses the existing auth_token (no extra user prompt).
         var request = PrepareAuthRequest(
             identityUri,
             iconUri,
@@ -192,7 +184,6 @@ public class MobileWalletAdapterClient: JsonRpc20Client, IAdapterOperations, IMe
         return request;
     }
 
-    // null in → null out, so the whole `options` object is omitted from the request.
     private static JsonRequest.JsonRequestOptions ToWireOptions(SignAndSendTransactionsOptions o)
     {
         if (o == null)

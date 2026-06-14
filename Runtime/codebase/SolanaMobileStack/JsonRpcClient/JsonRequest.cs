@@ -48,11 +48,6 @@ namespace Solana.Unity.SDK
             [RequiredMember]
             public string Cluster { get; set; }
 
-            // MWA 2.0 renamed the network identifier from "cluster" to "chain" using
-            // CAIP-2 values (e.g. "solana:devnet"). Wallets implementing the 2.0 spec
-            // (e.g. Seeker Seed Vault) ignore the legacy "cluster" field and default to
-            // "solana:mainnet" when "chain" is absent. Both are serialized for
-            // backward/forward compatibility across MWA 1.x and 2.0 wallets.
             [JsonProperty("chain", NullValueHandling = NullValueHandling.Ignore)]
             [RequiredMember]
             public string Chain { get; set; }
@@ -70,12 +65,10 @@ namespace Solana.Unity.SDK
             [RequiredMember]
             public List<string> Addresses { get; set; }
 
-            // sign_and_send_transactions network-submission options. Omitted when null.
             [JsonProperty("options", NullValueHandling = NullValueHandling.Ignore)]
             [RequiredMember]
             public JsonRequestOptions Options { get; set; }
 
-            // Sign-In-With-Solana input fields on authorize. Omitted when null.
             [JsonProperty("sign_in_payload", NullValueHandling = NullValueHandling.Ignore)]
             [RequiredMember]
             public SignInPayload SignInPayload { get; set; }

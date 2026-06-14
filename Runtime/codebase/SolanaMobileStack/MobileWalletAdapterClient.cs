@@ -78,6 +78,7 @@ public class MobileWalletAdapterClient: JsonRpc20Client, IAdapterOperations, IMe
     
     public Task<SignedResult> SignTransactions(IEnumerable<byte[]> transactions)
     {
+        if (transactions == null) throw new ArgumentNullException(nameof(transactions));
         var request = PrepareSignTransactionsRequest(transactions);
         return SendRequest<SignedResult>(request);
     }
@@ -85,12 +86,15 @@ public class MobileWalletAdapterClient: JsonRpc20Client, IAdapterOperations, IMe
     public Task<SignAndSendResult> SignAndSendTransactions(
         IEnumerable<byte[]> transactions, SignAndSendTransactionsOptions options = null)
     {
+        if (transactions == null) throw new ArgumentNullException(nameof(transactions));
         var request = PrepareSignAndSendTransactionsRequest(transactions, options);
         return SendRequest<SignAndSendResult>(request);
     }
 
     public Task<SignedResult> SignMessages(IEnumerable<byte[]> messages, IEnumerable<byte[]> addresses)
     {
+        if (messages == null) throw new ArgumentNullException(nameof(messages));
+        if (addresses == null) throw new ArgumentNullException(nameof(addresses));
         var request = PrepareSignMessagesRequest(messages, addresses);
         return SendRequest<SignedResult>(request);
     }

@@ -480,7 +480,21 @@ namespace Solana.Unity.SDK
             for (var i = 0; i < arr.Count; i++)
             {
                 var s = arr[i]?.Type == JTokenType.String ? arr[i].Value<string>() : null;
-                result[i] = string.IsNullOrEmpty(s) ? null : Convert.FromBase64String(s);
+                if (string.IsNullOrEmpty(s))
+                {
+                    result[i] = null;
+                    continue;
+                }
+                try
+                {
+                    result[i] = Convert.FromBase64String(s);
+                }
+                catch (FormatException)
+                {
+                    // Malformed signature from the wallet — treat as not-submitted (null) rather
+                    // than throwing out of the typed-result mapping.
+                    result[i] = null;
+                }
             }
             return result;
         }
@@ -531,7 +545,10 @@ namespace Solana.Unity.SDK
         /// normalized to base58 in both paths.
         /// </summary>
         public Task<(Account account, SignInResult signInResult)> LoginWithSignIn(SignInPayload payload)
-            => RunExclusive("LoginWithSignIn", () => LoginWithSignInImpl(payload));
+        {
+            if (payload == null) throw new ArgumentNullException(nameof(payload));
+            return RunExclusive("LoginWithSignIn", () => LoginWithSignInImpl(payload));
+        }
 
         private async Task<(Account account, SignInResult signInResult)> LoginWithSignInImpl(SignInPayload payload)
         {

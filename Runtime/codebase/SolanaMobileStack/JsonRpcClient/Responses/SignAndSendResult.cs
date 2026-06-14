@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Newtonsoft.Json;
 using UnityEngine.Scripting;
 
@@ -19,9 +18,33 @@ public class SignAndSendResult
 
     /// <summary>The signatures decoded to raw bytes, or null when none were returned.</summary>
     [RequiredMember]
-    public List<byte[]> SignatureBytes => Signatures is { Count: > 0 }
-        ? Signatures.Select(Convert.FromBase64String).ToList()
-        : null;
+    public List<byte[]> SignatureBytes
+    {
+        get
+        {
+            if (Signatures is not { Count: > 0 })
+                return null;
+
+            var bytes = new List<byte[]>(Signatures.Count);
+            for (var i = 0; i < Signatures.Count; i++)
+            {
+                var sig = Signatures[i];
+                if (string.IsNullOrEmpty(sig))
+                    throw new JsonSerializationException(
+                        $"sign_and_send signature at index {i} was null or empty.");
+                try
+                {
+                    bytes.Add(Convert.FromBase64String(sig));
+                }
+                catch (FormatException e)
+                {
+                    throw new JsonSerializationException(
+                        $"sign_and_send signature at index {i} ('{sig}') was not valid base64.", e);
+                }
+            }
+            return bytes;
+        }
+    }
 }
 
 /// <summary>

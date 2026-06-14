@@ -14,6 +14,7 @@ as if they'd never signed in. Instead:
 Use `MwaSession` (static, works before any adapter exists) to decide:
 
 ```csharp
+using System;
 using Solana.Unity.SDK;
 using UnityEngine;
 using UnityEngine.UI;
@@ -25,28 +26,45 @@ public class LandingScreen : MonoBehaviour
     [SerializeField] private Button logoutButton;
     [SerializeField] private TMPro.TMP_Text continueLabel;
 
+    // async void can't propagate exceptions to a caller — always wrap the body in try/catch
+    // so a failed await can't crash the app with an unobserved exception.
     private async void Start()
     {
-        bool hasSession = await MwaSession.HasCachedSession();
-
-        connectButton.gameObject.SetActive(!hasSession);
-        continueButton.gameObject.SetActive(hasSession);
-        logoutButton.gameObject.SetActive(hasSession);
-
-        if (hasSession)
+        try
         {
-            var addr = MwaSession.CachedAccountAddress();
-            continueLabel.text = $"Continue as {addr[..4]}…{addr[^4..]}";
+            bool hasSession = await MwaSession.HasCachedSession();
+
+            connectButton.gameObject.SetActive(!hasSession);
+            continueButton.gameObject.SetActive(hasSession);
+            logoutButton.gameObject.SetActive(hasSession);
+
+            if (hasSession)
+            {
+                var addr = MwaSession.CachedAccountAddress();
+                continueLabel.text = $"Continue as {addr[..4]}…{addr[^4..]}";
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogException(e);
         }
     }
 
     // Connect / Continue are the SAME call — LoginWalletAdapter() prompts on first connect
     // and is silent when a session is cached.
-    public async void OnConnectOrContinue() => await Web3.Instance.LoginWalletAdapter();
+    public async void OnConnectOrContinue()
+    {
+        try { await Web3.Instance.LoginWalletAdapter(); }
+        catch (Exception e) { Debug.LogException(e); }
+    }
 
     // Landing logout: clear locally so next launch shows Connect. (For a wallet-side revoke,
     // use the adapter's Deauthorize() once connected.)
-    public async void OnLogout() => await MwaSession.ClearCachedSession();
+    public async void OnLogout()
+    {
+        try { await MwaSession.ClearCachedSession(); }
+        catch (Exception e) { Debug.LogException(e); }
+    }
 }
 ```
 

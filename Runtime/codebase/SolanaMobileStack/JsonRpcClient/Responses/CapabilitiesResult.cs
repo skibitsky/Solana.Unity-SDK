@@ -96,7 +96,20 @@ internal sealed class MixedStringArrayConverter : JsonConverter
         for (var i = 0; i < array.Count; i++)
         {
             var token = array[i];
-            result[i] = token.Type == JTokenType.Null ? null : token.ToString();
+            switch (token.Type)
+            {
+                case JTokenType.Null:
+                    result[i] = null;
+                    break;
+                case JTokenType.String:
+                case JTokenType.Integer:
+                case JTokenType.Float:
+                    result[i] = token.ToString();
+                    break;
+                default:
+                    throw new JsonSerializationException(
+                        $"Expected a string or number element but got {token.Type} at index {i}.");
+            }
         }
         return result;
     }

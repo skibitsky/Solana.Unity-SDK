@@ -56,6 +56,7 @@ namespace Solana.Unity.SDK
         public const long InvalidPayloads = -2;
         public const long NotSigned = -3;
         public const long NotSubmitted = -4;
+        public const long NotCloned = -5; // clone_authorization declined by the wallet
         public const long TooManyPayloads = -6;
         public const long ChainNotSupported = -7;
     }

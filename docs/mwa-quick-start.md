@@ -3,6 +3,10 @@
 Connect a Unity Android app to an on-device Solana wallet (Phantom, Solflare, or the
 Seeker's Seed Vault) using Mobile Wallet Adapter (MWA) 2.0.
 
+> For full install steps, Android build setup, an end-to-end example, and troubleshooting, see
+> the [Installation & Usage guide](installation.md). This page is the condensed MWA connect
+> walkthrough.
+
 ## Prerequisites
 
 - Unity 2021.3 LTS or later
@@ -61,20 +65,23 @@ Because returning users reconnect silently, a landing screen should show **Conti
 
 ## Use MWA-specific methods
 
-The MWA-only methods (`Deauthorize`, `SignAndSendTransactions`, `GetCapabilities`,
-`CloneAuthorization`, `LoginWithSignIn`, `ReconnectWallet`) live on `SolanaWalletAdapter`.
-After logging in, cast `Web3.Wallet`:
+The MWA-only methods (`DisconnectWallet`, `DeauthorizeWallet`, `ReconnectWallet`,
+`SignAndSendTransactions`, `SignMessages`, `GetCapabilities`, `CloneAuthorization`,
+`LoginWithSignIn`) live on `SolanaWalletAdapter`. After logging in, cast `Web3.Wallet`:
 
 ```csharp
 var adapter = Web3.Wallet as SolanaWalletAdapter;
 
 var caps  = await adapter.GetCapabilities();
 var sig   = await Web3.Wallet.SignMessage(System.Text.Encoding.UTF8.GetBytes("hello"));
-await adapter.Deauthorize(); // revoke wallet-side + clear local state
+
+await adapter.DisconnectWallet();  // local clear (next Login re-prompts)
+await adapter.DeauthorizeWallet(); // revoke wallet-side + clear local state
 ```
 
 ## Next steps
 
-- [Method Reference](mwa-method-reference.md) — the full MWA API
+- [Installation & Usage](installation.md) — full setup, end-to-end example & troubleshooting
+- [Method Reference](mwa-method-reference.md) — the full MWA API + React Native → Unity mapping
 - [Best Practices](mwa-best-practices.md) — landing-screen flow & gotchas
 - [Cache Guide](mwa-cache-guide.md) — customize auth-token storage

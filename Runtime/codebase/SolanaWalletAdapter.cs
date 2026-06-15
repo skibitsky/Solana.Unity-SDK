@@ -92,33 +92,81 @@ namespace Solana.Unity.SDK
                 return _internalWallet.SignMessage(message);
             throw new NotImplementedException();
         }
-        
+
+        /// <summary>
+        /// Signs multiple arbitrary messages in a single wallet round-trip (Android MWA only),
+        /// the batch counterpart to <see cref="SignMessage"/> and the equivalent of the React
+        /// Native SDK's <c>signMessages</c>. Returns one signed payload per input message.
+        /// </summary>
+        public async Task<byte[][]> SignMessages(byte[][] messages)
+        {
+            var mobileAdapter = _internalWallet as SolanaMobileWalletAdapter;
+            if (mobileAdapter != null)
+                return await mobileAdapter.SignMessages(messages);
+            if (_internalWallet != null)
+                throw new NotImplementedException();
+            return null;
+        }
+
         protected override Task<Account> _CreateAccount(string mnemonic = null, string password = null)
         {
             throw new NotImplementedException();
         }
 
-        public override void Logout()
+        /// <summary>
+        /// Disconnects locally: clears the cached session (in-memory token, cached public key,
+        /// auth-token cache, remembered wallet). Does NOT revoke wallet-side — use
+        /// <see cref="DeauthorizeWallet"/> for that. The next <c>Login()</c> re-prompts.
+        /// When active, also nulls <c>Web3.Wallet</c> (fires <c>Web3.OnLogout</c> / <c>OnWalletChangeState</c>).
+        /// </summary>
+        public async Task DisconnectWallet()
         {
             base.Logout();
-            _internalWallet?.Logout();
+            if (_internalWallet is SolanaMobileWalletAdapter mobileAdapter)
+                await mobileAdapter.DisconnectWallet();
+            else
+                _internalWallet?.Logout();
+            DetachFromWeb3IfActive();
         }
 
-        [Obsolete("Renamed to Deauthorize(). This alias forwards to it and may be removed in a future release.")]
-        public Task DisconnectWallet() => Deauthorize();
+        /// <summary>
+        /// <see cref="WalletBase"/> override; performs the same local clear as
+        /// <see cref="DisconnectWallet"/>.
+        /// </summary>
+        public override void Logout() => DisconnectWallet().GetAwaiter().GetResult();
 
-        public async Task Deauthorize()
+        /// <summary>
+        /// Revokes the authorization wallet-side and clears local state (Android MWA only),
+        /// firing <c>OnWalletDisconnected</c>. For a local-only disconnect use
+        /// <see cref="DisconnectWallet"/>. When active, also nulls <c>Web3.Wallet</c>.
+        /// </summary>
+        public async Task DeauthorizeWallet()
         {
             var mobileAdapter = _internalWallet as SolanaMobileWalletAdapter;
             if (mobileAdapter != null)
             {
-                await mobileAdapter.Deauthorize();
+                await mobileAdapter.DeauthorizeWallet();
+                DetachFromWeb3IfActive();
                 return;
             }
             if (_internalWallet != null)
                 throw new NotImplementedException();
             // No internal wallet configured - nothing to deauthorize
         }
+
+        // Null Web3.Wallet when this adapter is the active one. No-op when standalone
+        // or when a different wallet is active.
+        private void DetachFromWeb3IfActive()
+        {
+            if (Web3.Instance != null && ReferenceEquals(Web3.Instance.WalletBase, this))
+                Web3.Instance.WalletBase = null;
+        }
+
+        /// <summary>
+        /// Clears the cached wallet-adapter session without an instance (e.g. a cached account
+        /// shown before login). Local only; does not revoke wallet-side.
+        /// </summary>
+        public static Task ClearCachedSession() => MwaSession.ClearCachedSession();
 
         /// <summary>
         /// Signs AND submits transactions via the wallet (Android MWA only), returning a
@@ -158,7 +206,12 @@ namespace Solana.Unity.SDK
         {
             var mobileAdapter = _internalWallet as SolanaMobileWalletAdapter;
             if (mobileAdapter != null)
-                return await mobileAdapter.LoginWithSignIn(payload);
+            {
+                var result = await mobileAdapter.LoginWithSignIn(payload);
+                // SIWS bypasses Login(), so set Account here.
+                Account = result.account;
+                return result;
+            }
             if (_internalWallet != null)
                 throw new NotImplementedException();
             return default;

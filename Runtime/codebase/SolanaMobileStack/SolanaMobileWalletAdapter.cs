@@ -662,18 +662,29 @@ namespace Solana.Unity.SDK
 
 
         /// <summary>
-        /// Clears the in-memory token, the cached public key in PlayerPrefs,
-        /// and the auth token stored in <see cref="IMwaAuthCache"/>. Does
-        /// NOT call <c>deauthorize</c> on the wallet side. Use
-        /// <see cref="Deauthorize"/> when the wallet-side session also
-        /// needs to be revoked.
+        /// Disconnects locally: clears the in-memory token, the cached public key in
+        /// PlayerPrefs, and the auth token stored in <see cref="IMwaAuthCache"/>. Does
+        /// NOT call <c>deauthorize</c> on the wallet side — use
+        /// <see cref="DeauthorizeWallet"/> when the wallet-side session also needs to be
+        /// revoked. The next <c>Login()</c> re-prompts.
         ///
-        /// Stays synchronous to keep the <see cref="WalletBase"/> override
-        /// signature stable. The cache <see cref="IMwaAuthCache.Clear"/>
-        /// call is awaited synchronously, so custom cache impls must not
-        /// block on UI or network here.
+        /// Awaitable, but the local clear itself runs synchronously (the cache
+        /// <see cref="IMwaAuthCache.Clear"/> call is awaited synchronously), so custom cache
+        /// impls must not block on UI or network here.
         /// </summary>
-        public override void Logout()
+        public Task DisconnectWallet()
+        {
+            ClearLocalSession();
+            return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// <see cref="WalletBase"/> override; performs the same local clear as
+        /// <see cref="DisconnectWallet"/>.
+        /// </summary>
+        public override void Logout() => ClearLocalSession();
+
+        private void ClearLocalSession()
         {
             base.Logout();
             PlayerPrefs.DeleteKey(PrefKeyPublicKey);
@@ -682,13 +693,13 @@ namespace Solana.Unity.SDK
             try
             {
                 // Custom IMwaAuthCache impls (Keystore, EncryptedSharedPreferences, etc.) can
-                // throw on backend errors. Swallow here so Deauthorize still fires
-                // OnWalletDisconnected and the rest of the logout sequence completes.
+                // throw on backend errors. Swallow here so DeauthorizeWallet still fires
+                // OnWalletDisconnected and the rest of the disconnect sequence completes.
                 _authCache.Clear().GetAwaiter().GetResult();
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"[MWA] Auth cache clear failed during Logout: {e}");
+                Debug.LogWarning($"[MWA] Auth cache clear failed during DisconnectWallet: {e}");
             }
 
             try
@@ -697,14 +708,17 @@ namespace Solana.Unity.SDK
             }
             catch (Exception e)
             {
-                Debug.LogWarning($"[MWA] Wallet selection cache clear failed during Logout: {e}");
+                Debug.LogWarning($"[MWA] Wallet selection cache clear failed during DisconnectWallet: {e}");
             }
         }
 
-        [Obsolete("Renamed to Deauthorize(). This alias forwards to it and may be removed in a future release.")]
-        public Task DisconnectWallet() => Deauthorize();
-
-        public Task Deauthorize() => RunExclusive("Deauthorize", DeauthorizeImpl);
+        /// <summary>
+        /// Revokes the authorization wallet-side (the <c>deauthorize</c> RPC, sent to the
+        /// issuing wallet) and then clears local state, firing <see cref="OnWalletDisconnected"/>.
+        /// Best-effort remote revoke: if the issuing wallet can't be targeted (none cached /
+        /// uninstalled) it skips the remote call and clears local only.
+        /// </summary>
+        public Task DeauthorizeWallet() => RunExclusive("DeauthorizeWallet", DeauthorizeImpl);
 
         private async Task DeauthorizeImpl()
         {
@@ -750,7 +764,7 @@ namespace Solana.Unity.SDK
                           "clearing local session only.");
             }
 
-            Logout();
+            ClearLocalSession();
             OnWalletDisconnected?.Invoke();
         }
 
@@ -839,24 +853,45 @@ namespace Solana.Unity.SDK
 
         private async Task<byte[]> SignMessageImpl(byte[] message)
         {
+            var signed = await SignMessagesImpl(new[] { message });
+            return signed[0];
+        }
+
+        /// <summary>
+        /// Signs multiple arbitrary messages in a single wallet round-trip
+        /// (<c>sign_messages</c>) — the batch counterpart to <see cref="SignMessage"/>,
+        /// mirroring the React Native SDK's <c>signMessages</c>. All messages are signed
+        /// with the connected account; returns one signed payload per input message, in
+        /// order (each payload carries the wallet's signature, matching <see cref="SignMessage"/>).
+        /// </summary>
+        public Task<byte[][]> SignMessages(byte[][] messages)
+            => RunExclusive("SignMessages", () => SignMessagesImpl(messages));
+
+        private async Task<byte[][]> SignMessagesImpl(byte[][] messages)
+        {
+            if (messages == null || messages.Length == 0)
+                throw new ArgumentException(
+                    "[MWA] SignMessages: at least one message is required", nameof(messages));
+
             string cachedPk = Account?.PublicKey?.ToString()
                 ?? PlayerPrefs.GetString(PrefKeyPublicKey, null);
             if (string.IsNullOrEmpty(cachedPk))
-                throw new Exception("[MWA] Cannot sign message: no account available");
+                throw new Exception("[MWA] Cannot sign messages: no account available");
 
+            var address = new PublicKey(cachedPk).KeyBytes;
             SignedResult signedMessages = null;
             await RunPrivileged(async client =>
             {
                 signedMessages = await client.SignMessages(
-                    messages: new List<byte[]> { message },
-                    addresses: new List<byte[]> { new PublicKey(cachedPk).KeyBytes }
+                    messages: messages.ToList(),
+                    addresses: new List<byte[]> { address }
                 );
-            }, "SignMessage");
+            }, "SignMessages");
 
-            if (signedMessages == null)
-                throw new Exception("[MWA] SignMessage: signed payloads were not populated");
+            if (signedMessages?.SignedPayloadsBytes == null)
+                throw new Exception("[MWA] SignMessages: signed payloads were not populated");
 
-            return signedMessages.SignedPayloadsBytes[0];
+            return signedMessages.SignedPayloadsBytes.ToArray();
         }
 
         protected override Task<Account> _CreateAccount(string mnemonic = null, string password = null)

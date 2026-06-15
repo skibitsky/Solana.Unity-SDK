@@ -103,6 +103,8 @@ To avoid "Duplicate Class" or "Dependency Conflict" errors when building for And
 
 Once checked, the Solana SDK will automatically detect the generated `Assets/Plugins/Android/mainTemplate.gradle` file and inject the necessary dependency fixes (handling AndroidX and Guava conflicts) the next time you build or reload the editor.
 
+For connecting Android apps to on-device wallets (Phantom, Solflare, Seed Vault) via Mobile Wallet Adapter — including a full install-and-use guide, an end-to-end example, a React Native → Unity method mapping, and troubleshooting — see [`docs/installation.md`](docs/installation.md).
+
 ## 💚 Open Source
 Open Source is at the heart of what we do at Magicblock. We believe building software in the open, with thriving communities, helps leave the world a little better than we found it.
 

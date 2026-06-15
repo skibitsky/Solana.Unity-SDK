@@ -46,7 +46,8 @@ namespace Solana.Unity.SDK
         /// <summary>
         /// Clears the cached session locally (account + auth token + remembered wallet),
         /// so the next launch shows "Connect". Does NOT revoke wallet-side — same semantics
-        /// as <c>Logout()</c>; use the adapter's <c>Deauthorize()</c> for a wallet-side revoke.
+        /// as the adapter's <c>DisconnectWallet()</c>; use <c>DeauthorizeWallet()</c> for a
+        /// wallet-side revoke.
         /// </summary>
         public static async Task ClearCachedSession(
             IMwaAuthCache authCache = null, IMwaWalletSelectionCache walletSelectionCache = null)

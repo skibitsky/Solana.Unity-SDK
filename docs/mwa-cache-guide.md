@@ -82,7 +82,7 @@ public class MySecureCache : IMwaAuthCache
 }
 ```
 
-> `Clear()` is awaited synchronously from `Logout()` — keep it non-blocking (no UI/network
+> `Clear()` is awaited synchronously from `DisconnectWallet()` — keep it non-blocking (no UI/network
 > waits).
 
 ## The wallet-selection cache

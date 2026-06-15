@@ -17,7 +17,7 @@ namespace Solana.Unity.SDK
     /// so it stays in PlayerPrefs and is out of scope for this interface.
     ///
     /// Implementations should keep all three methods cheap. <see cref="Clear"/>
-    /// is awaited synchronously from <c>Logout()</c>, so do not block on UI
+    /// is awaited synchronously from <c>DisconnectWallet()</c>, so do not block on UI
     /// or network calls inside it.
     /// </summary>
     public interface IMwaAuthCache
@@ -39,7 +39,7 @@ namespace Solana.Unity.SDK
 
         /// <summary>
         /// Removes the stored token. Must be idempotent so calling it twice
-        /// (e.g. <c>Logout()</c> followed by <c>Deauthorize()</c>) does
+        /// (e.g. <c>DisconnectWallet()</c> followed by <c>DeauthorizeWallet()</c>) does
         /// not throw.
         /// </summary>
         Task Clear();

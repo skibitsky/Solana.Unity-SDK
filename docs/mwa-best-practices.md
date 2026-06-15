@@ -59,7 +59,7 @@ public class LandingScreen : MonoBehaviour
     }
 
     // Landing logout: clear locally so next launch shows Connect. (For a wallet-side revoke,
-    // use the adapter's Deauthorize() once connected.)
+    // use the adapter's DeauthorizeWallet() once connected.)
     public async void OnLogout()
     {
         try { await MwaSession.ClearCachedSession(); }

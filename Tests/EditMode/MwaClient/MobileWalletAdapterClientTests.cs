@@ -338,6 +338,61 @@ namespace Solana.Unity.SDK.Tests.EditMode.MwaClient
         }
 
 
+        // sign_messages request shape (batch message signing)
+        [Test]
+        public void SignMessages_SendsCorrectMethod()
+        {
+            _ = _client.SignMessages(
+                new[] { new byte[] { 1, 2, 3 } },
+                new[] { new byte[] { 9 } });
+
+            var request = DecodeLastRequest();
+            Assert.AreEqual("sign_messages", request.Method,
+                "Method must be 'sign_messages'");
+        }
+
+        [Test]
+        public void SignMessages_EncodesAllPayloads_AsBase64_InOrder()
+        {
+            var first = new byte[] { 1, 2, 3, 4 };
+            var second = new byte[] { 5, 6, 7, 8 };
+
+            _ = _client.SignMessages(
+                new[] { first, second },
+                new[] { new byte[] { 9 } });
+
+            var request = DecodeLastRequest();
+            Assert.IsNotNull(request.Params.Payloads);
+            Assert.AreEqual(2, request.Params.Payloads.Count,
+                "one payload entry per input message");
+            Assert.AreEqual(Convert.ToBase64String(first), request.Params.Payloads[0]);
+            Assert.AreEqual(Convert.ToBase64String(second), request.Params.Payloads[1]);
+        }
+
+        [Test]
+        public void SignMessages_EncodesAddresses_AsBase64()
+        {
+            var address = new byte[] { 10, 20, 30 };
+
+            _ = _client.SignMessages(
+                new[] { new byte[] { 1 } },
+                new[] { address });
+
+            var request = DecodeLastRequest();
+            Assert.IsNotNull(request.Params.Addresses);
+            Assert.AreEqual(1, request.Params.Addresses.Count);
+            Assert.AreEqual(Convert.ToBase64String(address), request.Params.Addresses[0],
+                "address must be base64-encoded");
+        }
+
+        [Test]
+        public void SignMessages_ThrowsArgumentNullException_WhenMessagesNull()
+        {
+            Assert.Throws<ArgumentNullException>(() =>
+                _client.SignMessages(null, new[] { new byte[] { 9 } }));
+        }
+
+
         // clone_authorization request shape
         [Test]
         public void CloneAuthorization_SendsCorrectMethod_WithEmptyParams()

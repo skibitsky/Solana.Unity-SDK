@@ -5,6 +5,24 @@ wrapper (the underlying `SolanaMobileWalletAdapter` is `[Obsolete]` — use the 
 On Android the wrapper routes to MWA; on WebGL/iOS the MWA-specific methods throw
 `NotImplementedException`.
 
+## React Native → Unity method mapping
+
+Every wallet method in the Solana Mobile **React Native** SDK (`Web3MobileWallet`, used inside
+`transact`) has a functional equivalent here. The names follow Unity's `WalletBase` convention
+rather than the RN names, but the behavior matches:
+
+| React Native (`Web3MobileWallet`) | Unity (`SolanaWalletAdapter`) |
+|---|---|
+| `authorize` | `Login()` |
+| `authorize` + `sign_in_payload` (`signIn`) | `LoginWithSignIn(SignInPayload)` |
+| `reauthorize` | internal; surfaced via `ReconnectWallet()` (silent resume) |
+| `deauthorize` | `DeauthorizeWallet()` (remote revoke) / `DisconnectWallet()` (local only) |
+| `getCapabilities` | `GetCapabilities()` |
+| `signTransactions` | `SignTransaction()` / `SignAllTransactions()` |
+| `signAndSendTransactions` | `SignAndSendTransactions()` |
+| `signMessages` | `SignMessages(byte[][])` (or `SignMessage(byte[])` for one) |
+| `cloneAuthorization` | `CloneAuthorization()` |
+
 ## Configuration
 
 ```csharp
@@ -46,16 +64,27 @@ Token validity is re-checked lazily on the next operation that needs the wallet 
 ### LoginWithSignIn (Sign-In-With-Solana)
 
 ```csharp
+// Recommended entry point (creates the adapter, signs in, sets Web3.Wallet → fires OnLogin):
+Task<(Account account, SignInResult signInResult)> Web3.Instance.LoginWalletAdapter(SignInPayload payload)
+
+// Underlying adapter method (use when you already hold a SolanaWalletAdapter):
 Task<(Account account, SignInResult signInResult)> LoginWithSignIn(SignInPayload payload)
 ```
 
-Authorizes carrying a `sign_in_payload` and returns the account plus the SIWS result. If
-the wallet supports SIWS natively, the wallet's `sign_in_result` is returned. Otherwise the
+**SIWS is itself the login** — a single `authorize` carrying `sign_in_payload` that connects
+and authenticates at once. Do **not** call `LoginWalletAdapter()` (plain connect) first; that
+would be a second prompt. Use the `Web3.Instance.LoginWalletAdapter(payload)` overload as your
+first/only login action: it creates the adapter, performs the SIWS authorize, and assigns
+`Web3.Wallet` so `Web3.OnLogin` / `OnWalletChangeState` fire (see [Events](#events)). The
+adapter-level `LoginWithSignIn` does the same authorize but does not touch `Web3` — reach for
+it only when you constructed the adapter yourself.
+
+If the wallet supports SIWS natively, the wallet's `sign_in_result` is returned. Otherwise the
 SDK builds the SIWS message and signs it via `sign_messages` as a fallback. The result
 `Address` is normalized to base58 in both paths.
 
 ```csharp
-var (account, siws) = await adapter.LoginWithSignIn(new SignInPayload
+var (account, siws) = await Web3.Instance.LoginWalletAdapter(new SignInPayload
 {
     Domain    = "yourgame.com",
     Statement = "Sign in to My Game",
@@ -77,25 +106,35 @@ Task ReconnectWallet()
 Silently restores a cached session via `Login()`'s fast path and fires `OnWalletReconnected`.
 Used by `HandleApplicationFocus` for silent resume. Throws if no session could be restored.
 
-### Logout
+### DisconnectWallet
 
 ```csharp
-void Logout()   // WalletBase override
+Task DisconnectWallet()
 ```
 
-Clears local state — in-memory token, the cached public key, the auth-token cache, and the
-remembered wallet package. Does **not** revoke wallet-side; the next `Login()` re-prompts.
+Disconnects **locally** — clears the in-memory token, the cached public key, the auth-token
+cache, and the remembered wallet package. Does **not** revoke wallet-side; the next `Login()`
+re-prompts. Awaitable, though the local clear runs synchronously. `Logout()` (the
+`WalletBase` override) performs the same local clear, so the two are equivalent. When this
+adapter is the active `Web3` wallet it also nulls `Web3.Wallet`, firing the
+[Web3 events](#events).
 
-### Deauthorize
+> **One-call disconnect:** `Web3.Instance.DisconnectWalletAdapter()` is the easy entry point —
+> it disconnects the active adapter if there is one, otherwise clears the cached session
+> directly (e.g. forgetting a cached account shown on a landing screen before login), and
+> fires the [Web3 events](#events) either way. Mirrors `Web3.Instance.LoginWalletAdapter()`.
+
+### DeauthorizeWallet
 
 ```csharp
-Task Deauthorize()
+Task DeauthorizeWallet()
 ```
 
 Revokes the authorization **wallet-side** (the `deauthorize` RPC, sent to the exact issuing
 wallet) and then clears local state, firing `OnWalletDisconnected`. The remote revoke is
 best-effort: if the issuing wallet can't be targeted (none cached / uninstalled) it skips
-the remote call and clears local only, rather than popping the OS chooser.
+the remote call and clears local only, rather than popping the OS chooser. When this adapter
+is the active `Web3` wallet it also nulls `Web3.Wallet`, firing the [Web3 events](#events).
 
 ### CloneAuthorization
 
@@ -122,6 +161,17 @@ Task<byte[]> SignMessage(byte[] message)   // WalletBase override
 ```
 
 Signs an arbitrary message; returns the raw 64-byte ed25519 signature.
+
+### SignMessages (batch)
+
+```csharp
+Task<byte[][]> SignMessages(byte[][] messages)
+```
+
+Signs multiple messages in a **single wallet round-trip** (`sign_messages`) — the batch
+counterpart to `SignMessage` and the equivalent of the React Native SDK's `signMessages`. All
+messages are signed with the connected account; returns one signed payload per input message,
+in order.
 
 ### SignTransaction / SignAllTransactions
 
@@ -196,10 +246,38 @@ Queries the wallet's supported features and limits. `CapabilitiesResult`:
 
 ## Events
 
+**Adapter events** (on a `SolanaWalletAdapter` instance):
+
 | Event | Fired when |
 |---|---|
-| `OnWalletDisconnected` | `Deauthorize()` completes |
+| `OnWalletDisconnected` | `DeauthorizeWallet()` completes |
 | `OnWalletReconnected` | `ReconnectWallet()` restores a session |
+
+**Web3 events** (static, on `Web3`) — bind here to drive connect/disconnect UI:
+
+| Event | Fired when |
+|---|---|
+| `Web3.OnLogin` (`Action<Account>`) | a wallet becomes active (login succeeds) |
+| `Web3.OnLogout` (`Action`) | the active wallet is cleared |
+| `Web3.OnWalletChangeState` (`WalletChange`) | any of the above; **also fires immediately on subscribe** |
+
+`DisconnectWallet()` and `DeauthorizeWallet()` detach this adapter from `Web3` (null
+`Web3.Wallet`) when it is the active wallet, so `OnLogout` / `OnWalletChangeState` fire for
+**every** teardown path — `Web3.Instance.Logout()`, `DisconnectWallet()`, or
+`DeauthorizeWallet()`. Because `OnWalletChangeState` also fires on subscribe, it is the
+simplest hook for button state:
+
+```csharp
+void OnEnable()  => Web3.OnWalletChangeState += Refresh;
+void OnDisable() => Web3.OnWalletChangeState -= Refresh;
+
+void Refresh()
+{
+    bool connected = Web3.Wallet?.Account != null;
+    connectButton.SetActive(!connected);
+    disconnectButton.SetActive(connected);
+}
+```
 
 ---
 
@@ -219,8 +297,8 @@ Task         MwaSession.ClearCachedSession(IMwaAuthCache = null, IMwaWalletSelec
   **and** token present). Pass the same `IMwaAuthCache` you configured (defaults to
   `PlayerPrefsAuthCache`).
 - `CachedAccountAddress` → the remembered address for a "Continue as …" label.
-- `ClearCachedSession` → local logout (account + token + remembered wallet), no wallet-side
-  revoke (same semantics as `Logout()`).
+- `ClearCachedSession` → local disconnect (account + token + remembered wallet), no
+  wallet-side revoke (same semantics as `DisconnectWallet()`).
 
 ## Error handling
 

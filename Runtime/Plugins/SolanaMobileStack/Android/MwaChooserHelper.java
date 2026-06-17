@@ -19,6 +19,8 @@ public final class MwaChooserHelper {
 
     private static final String EXTRA_NONCE = "chooser_nonce";
 
+    private static final int CHOOSER_REQUEST_CODE = 0x4D7741; // "MwA"
+
     private static volatile String sChosenPackage = null;
     private static volatile String sChooserNonce = null;
     private static BroadcastReceiver sReceiver = null;
@@ -49,7 +51,7 @@ public final class MwaChooserHelper {
         PendingIntent pendingIntent = PendingIntent.getBroadcast(activity, 0, broadcast, flags);
 
         Intent chooser = Intent.createChooser(target, title, pendingIntent.getIntentSender());
-        activity.startActivity(chooser);
+        activity.startActivityForResult(chooser, CHOOSER_REQUEST_CODE);
     }
 
     private static synchronized void registerReceiver(Context context) {

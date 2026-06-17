@@ -140,9 +140,8 @@ namespace Solana.Unity.SDK.Tests.EditMode.MwaAuthCache
         {
             var cache = new PlayerPrefsAuthCache();
 
-            // Logout() and DisconnectWallet() can both call Clear in a row,
+            // DisconnectWallet() and DeauthorizeWallet() can both call Clear in a row,
             // so back-to-back invocations on an empty cache must be safe.
-            await cache.Clear();
             await cache.Clear();
 
             Assert.IsNull(await cache.Get());

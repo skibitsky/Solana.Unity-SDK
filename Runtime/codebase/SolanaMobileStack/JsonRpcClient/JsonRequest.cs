@@ -48,11 +48,6 @@ namespace Solana.Unity.SDK
             [RequiredMember]
             public string Cluster { get; set; }
 
-            // MWA 2.0 renamed the network identifier from "cluster" to "chain" using
-            // CAIP-2 values (e.g. "solana:devnet"). Wallets implementing the 2.0 spec
-            // (e.g. Seeker Seed Vault) ignore the legacy "cluster" field and default to
-            // "solana:mainnet" when "chain" is absent. Both are serialized for
-            // backward/forward compatibility across MWA 1.x and 2.0 wallets.
             [JsonProperty("chain", NullValueHandling = NullValueHandling.Ignore)]
             [RequiredMember]
             public string Chain { get; set; }
@@ -70,8 +65,46 @@ namespace Solana.Unity.SDK
             [RequiredMember]
             public List<string> Addresses { get; set; }
 
+            [JsonProperty("options", NullValueHandling = NullValueHandling.Ignore)]
+            [RequiredMember]
+            public JsonRequestOptions Options { get; set; }
+
+            [JsonProperty("sign_in_payload", NullValueHandling = NullValueHandling.Ignore)]
+            [RequiredMember]
+            public SignInPayload SignInPayload { get; set; }
+
             [RequiredMember]
             public JsonRequestParams()
+            {
+            }
+        }
+
+        [Serializable]
+        [Preserve]
+        public class JsonRequestOptions
+        {
+            [JsonProperty("min_context_slot", NullValueHandling = NullValueHandling.Ignore)]
+            [RequiredMember]
+            public ulong? MinContextSlot { get; set; }
+
+            [JsonProperty("commitment", NullValueHandling = NullValueHandling.Ignore)]
+            [RequiredMember]
+            public string Commitment { get; set; }
+
+            [JsonProperty("skip_preflight", NullValueHandling = NullValueHandling.Ignore)]
+            [RequiredMember]
+            public bool? SkipPreflight { get; set; }
+
+            [JsonProperty("max_retries", NullValueHandling = NullValueHandling.Ignore)]
+            [RequiredMember]
+            public int? MaxRetries { get; set; }
+
+            [JsonProperty("wait_for_commitment_to_send_next_transaction", NullValueHandling = NullValueHandling.Ignore)]
+            [RequiredMember]
+            public bool? WaitForCommitmentToSendNextTransaction { get; set; }
+
+            [RequiredMember]
+            public JsonRequestOptions()
             {
             }
         }

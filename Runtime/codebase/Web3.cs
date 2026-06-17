@@ -263,16 +263,52 @@ namespace Solana.Unity.SDK
         /// <returns></returns>
         public async Task<Account> LoginWalletAdapter()
         {
-
-            if(solanaWalletAdapterOptions.solanaWalletAdapterWebGLOptions.walletAdapterUIPrefab == null)
-                solanaWalletAdapterOptions.solanaWalletAdapterWebGLOptions.walletAdapterUIPrefab = Resources.Load<GameObject>("SolanaUnitySDK/WalletAdapterUI");
-            if (solanaWalletAdapterOptions.solanaWalletAdapterWebGLOptions.walletAdapterButtonPrefab == null)
-                solanaWalletAdapterOptions.solanaWalletAdapterWebGLOptions.walletAdapterButtonPrefab = Resources.Load<GameObject>("SolanaUnitySDK/WalletAdapterButton");
-            var walletAdapter = new SolanaWalletAdapter(solanaWalletAdapterOptions, rpcCluster, customRpc, webSocketsRpc, false);
+            var walletAdapter = CreateWalletAdapter();
             var acc = await walletAdapter.Login();
             if (acc != null)
                 WalletBase = walletAdapter;
             return acc;
+        }
+
+        /// <summary>
+        /// Login using the solana wallet adapter with Sign-In-With-Solana (Android MWA):
+        /// a single authorize carrying <paramref name="signInPayload"/> that connects and
+        /// signs in at once. On success the adapter becomes the active wallet. Returns the
+        /// account and the SIWS result.
+        /// </summary>
+        public async Task<(Account account, SignInResult signInResult)> LoginWalletAdapter(SignInPayload signInPayload)
+        {
+            var walletAdapter = CreateWalletAdapter();
+            var (acc, siws) = await walletAdapter.LoginWithSignIn(signInPayload);
+            if (acc != null)
+                WalletBase = walletAdapter;
+            return (acc, siws);
+        }
+
+        /// <summary>
+        /// Disconnects the wallet adapter locally and fires <c>OnLogout</c> /
+        /// <c>OnWalletChangeState</c>. Works whether or not an adapter is active — e.g. a
+        /// cached account shown at startup before login. Does not revoke wallet-side.
+        /// </summary>
+        public async Task DisconnectWalletAdapter()
+        {
+            if (WalletBase is SolanaWalletAdapter adapter)
+            {
+                await adapter.DisconnectWallet();
+                return;
+            }
+            await SolanaWalletAdapter.ClearCachedSession();
+            WalletBase = null;
+        }
+
+        // Loads the WebGL adapter prefabs, then builds the cross-platform adapter.
+        private SolanaWalletAdapter CreateWalletAdapter()
+        {
+            if (solanaWalletAdapterOptions.solanaWalletAdapterWebGLOptions.walletAdapterUIPrefab == null)
+                solanaWalletAdapterOptions.solanaWalletAdapterWebGLOptions.walletAdapterUIPrefab = Resources.Load<GameObject>("SolanaUnitySDK/WalletAdapterUI");
+            if (solanaWalletAdapterOptions.solanaWalletAdapterWebGLOptions.walletAdapterButtonPrefab == null)
+                solanaWalletAdapterOptions.solanaWalletAdapterWebGLOptions.walletAdapterButtonPrefab = Resources.Load<GameObject>("SolanaUnitySDK/WalletAdapterButton");
+            return new SolanaWalletAdapter(solanaWalletAdapterOptions, rpcCluster, customRpc, webSocketsRpc, false);
         }
 
         #region Clickable Methods

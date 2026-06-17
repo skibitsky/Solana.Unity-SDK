@@ -63,43 +63,99 @@ namespace Solana.Unity.SDK.Tests.EditMode.JsonRpc
         }
 
         [Test]
-        public void Deserialize_SupportsCloneAuthorization_True()
+        public void Deserialize_SupportedTransactionVersions_MixedStringAndNumber()
         {
-            // Arrange
-            const string json = "{\"supports_clone_authorization\":true}";
+            // The MWA spec allows a MIXED array: "legacy" (string) and 0 (number).
+            // The converter must normalize the numeric element to its string form.
+            const string json = "{\"supported_transaction_versions\":[\"legacy\",0]}";
 
-            // Act
             var result = JsonConvert.DeserializeObject<CapabilitiesResult>(json);
 
-            // Assert
-            Assert.IsTrue(result.SupportsCloneAuthorization.HasValue);
-            Assert.IsTrue(result.SupportsCloneAuthorization.Value,
-                "supports_clone_authorization:true must deserialize to true");
+            Assert.IsNotNull(result.SupportedTransactionVersions);
+            Assert.AreEqual(2, result.SupportedTransactionVersions.Length);
+            Assert.AreEqual("legacy", result.SupportedTransactionVersions[0]);
+            Assert.AreEqual("0", result.SupportedTransactionVersions[1],
+                "numeric version 0 must normalize to the string \"0\"");
+        }
+
+        // features[] (2.0) and the feature-detection predicates
+        [Test]
+        public void Deserialize_Features_FromJsonArray()
+        {
+            const string json = "{\"features\":[\"solana:cloneAuthorization\",\"solana:signInWithSolana\"]}";
+
+            var result = JsonConvert.DeserializeObject<CapabilitiesResult>(json);
+
+            Assert.IsNotNull(result.Features);
+            Assert.AreEqual(2, result.Features.Length);
+            Assert.IsTrue(result.HasFeature(CapabilitiesResult.FeatureCloneAuthorization));
+            Assert.IsTrue(result.HasFeature(CapabilitiesResult.FeatureSignInWithSolana));
+            Assert.IsTrue(result.SupportsCloneAuthorization,
+                "cloneAuthorization in features[] must drive the predicate true");
+            Assert.IsTrue(result.SupportsSignInWithSolana,
+                "signInWithSolana in features[] must drive the predicate true");
         }
 
         [Test]
-        public void Deserialize_SupportsCloneAuthorization_False()
+        public void SupportsCloneAuthorization_FromFeatures_WithoutLegacyBool()
         {
-            // Arrange
-            const string json = "{\"supports_clone_authorization\":false}";
+            // 2.0 wallets advertise via features[] and omit the legacy bool entirely.
+            const string json = "{\"features\":[\"solana:cloneAuthorization\"]}";
 
-            // Act
             var result = JsonConvert.DeserializeObject<CapabilitiesResult>(json);
 
-            // Assert
-            Assert.IsTrue(result.SupportsCloneAuthorization.HasValue);
-            Assert.IsFalse(result.SupportsCloneAuthorization.Value,
-                "supports_clone_authorization:false must deserialize to false");
+            Assert.IsNull(result.SupportsCloneAuthorizationLegacy,
+                "2.0 wallets do not send supports_clone_authorization");
+            Assert.IsTrue(result.SupportsCloneAuthorization);
         }
 
-        
+        [Test]
+        public void SupportsCloneAuthorization_FromLegacyBool_WithoutFeatures()
+        {
+            // 1.x fallback: no features[], but the deprecated bool is present.
+            const string json = "{\"supports_clone_authorization\":true}";
+
+            var result = JsonConvert.DeserializeObject<CapabilitiesResult>(json);
+
+            Assert.IsNull(result.Features);
+            Assert.IsTrue(result.SupportsCloneAuthorizationLegacy.HasValue);
+            Assert.IsTrue(result.SupportsCloneAuthorizationLegacy.Value);
+            Assert.IsTrue(result.SupportsCloneAuthorization,
+                "legacy bool must still drive the predicate for 1.x wallets");
+        }
+
+        [Test]
+        public void SupportsCloneAuthorization_False_WhenNeitherPresent()
+        {
+            const string json = "{}";
+
+            var result = JsonConvert.DeserializeObject<CapabilitiesResult>(json);
+
+            Assert.IsFalse(result.SupportsCloneAuthorization,
+                "predicate must be false when neither features[] nor the legacy bool is present");
+            Assert.IsFalse(result.SupportsSignInWithSolana);
+        }
+
+        [Test]
+        public void SupportsCloneAuthorization_False_WhenLegacyBoolFalse()
+        {
+            const string json = "{\"supports_clone_authorization\":false}";
+
+            var result = JsonConvert.DeserializeObject<CapabilitiesResult>(json);
+
+            Assert.IsTrue(result.SupportsCloneAuthorizationLegacy.HasValue);
+            Assert.IsFalse(result.SupportsCloneAuthorizationLegacy.Value);
+            Assert.IsFalse(result.SupportsCloneAuthorization);
+        }
+
+
         // Absence handling
         [Test]
         public void AllNullableFields_AreNull_WhenAbsentFromJson()
         {
             // Arrange
-            // supports_clone_authorization is bool? so absence must stay null,
-            // not implicitly coerce to false.
+            // The raw 1.x bool is bool? so absence must stay null, not coerce to
+            // false. Features[] must likewise be null (not an empty array).
             const string json = "{}";
 
             // Act
@@ -113,8 +169,10 @@ namespace Solana.Unity.SDK.Tests.EditMode.JsonRpc
                 "MaxMessagesPerRequest must be null when absent");
             Assert.IsNull(result.SupportedTransactionVersions,
                 "SupportedTransactionVersions must be null when absent");
-            Assert.IsNull(result.SupportsCloneAuthorization,
-                "SupportsCloneAuthorization is bool? and must be null (not false) when absent");
+            Assert.IsNull(result.Features,
+                "Features must be null when absent");
+            Assert.IsNull(result.SupportsCloneAuthorizationLegacy,
+                "SupportsCloneAuthorizationLegacy is bool? and must be null (not false) when absent");
         }
 
         [Test]
@@ -148,12 +206,12 @@ namespace Solana.Unity.SDK.Tests.EditMode.JsonRpc
         [Test]
         public void FullPayload_Deserializes_AllFields()
         {
-            // Arrange
+            // Arrange — a 2.0 payload: features[] instead of the legacy bool.
             const string json = "{" +
-                                "\"supports_clone_authorization\":true," +
+                                "\"features\":[\"solana:signInWithSolana\",\"solana:cloneAuthorization\"]," +
                                 "\"max_transactions_per_request\":12," +
                                 "\"max_messages_per_request\":7," +
-                                "\"supported_transaction_versions\":[\"legacy\",\"0\"]" +
+                                "\"supported_transaction_versions\":[\"legacy\",0]" +
                                 "}";
 
             // Act
@@ -161,11 +219,14 @@ namespace Solana.Unity.SDK.Tests.EditMode.JsonRpc
 
             // Assert
             Assert.IsNotNull(result);
-            Assert.AreEqual(true, result.SupportsCloneAuthorization);
+            Assert.AreEqual(2, result.Features.Length);
+            Assert.IsTrue(result.SupportsCloneAuthorization);
+            Assert.IsTrue(result.SupportsSignInWithSolana);
             Assert.AreEqual(12, result.MaxTransactionsPerRequest);
             Assert.AreEqual(7, result.MaxMessagesPerRequest);
             Assert.IsNotNull(result.SupportedTransactionVersions);
             Assert.AreEqual(2, result.SupportedTransactionVersions.Length);
+            Assert.AreEqual("0", result.SupportedTransactionVersions[1]);
         }
 
         

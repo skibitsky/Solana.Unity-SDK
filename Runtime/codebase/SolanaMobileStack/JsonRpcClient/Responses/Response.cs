@@ -1,4 +1,5 @@
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using UnityEngine.Scripting;
 
 // ReSharper disable once CheckNamespace
@@ -12,13 +13,17 @@ namespace Solana.Unity.SDK
         [Preserve]
         public class ResponseError
         {
-            [JsonProperty("code")] 
+            [JsonProperty("code")]
             [RequiredMember]
             public long Code { get; set; }
 
-            [JsonProperty("message")] 
+            [JsonProperty("message")]
             [RequiredMember]
             public string Message { get; set; }
+
+            [JsonProperty("data")]
+            [RequiredMember]
+            public JToken Data { get; set; }
         }
 
 
